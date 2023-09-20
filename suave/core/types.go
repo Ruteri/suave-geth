@@ -56,7 +56,7 @@ type ConfidentialEthBackend interface {
 
 type StoreTransportTopic interface {
 	node.Lifecycle
-	Subscribe() (<-chan DAMessage, context.CancelFunc)
+	Subscribe(func(DAMessage) error) context.CancelFunc
 	Publish(DAMessage)
 }
 

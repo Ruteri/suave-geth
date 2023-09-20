@@ -5,6 +5,7 @@ package vm
 import (
 	"fmt"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/suave/artifacts"
 	"github.com/mitchellh/mapstructure"
@@ -44,6 +45,7 @@ func (b *SuaveRuntimeAdapter) buildEthBlock(input []byte) (res []byte, err error
 	unpacked, err = artifacts.SuaveAbi.Methods["buildEthBlock"].Inputs.Unpack(input)
 	if err != nil {
 		err = errFailedToUnpackInput
+		res = []byte(err.Error())
 		return
 	}
 
@@ -55,11 +57,13 @@ func (b *SuaveRuntimeAdapter) buildEthBlock(input []byte) (res []byte, err error
 
 	if err = mapstructure.Decode(unpacked[0], &blockArgs); err != nil {
 		err = errFailedToDecodeField
+		res = []byte(err.Error())
 		return
 	}
 
 	if err = mapstructure.Decode(unpacked[1], &bidId); err != nil {
 		err = errFailedToDecodeField
+		res = []byte(err.Error())
 		return
 	}
 
@@ -71,12 +75,14 @@ func (b *SuaveRuntimeAdapter) buildEthBlock(input []byte) (res []byte, err error
 	)
 
 	if output1, output2, err = b.impl.buildEthBlock(blockArgs, bidId, namespace); err != nil {
+		res = []byte(err.Error())
 		return
 	}
 
 	result, err = artifacts.SuaveAbi.Methods["buildEthBlock"].Outputs.Pack(output1, output2)
 	if err != nil {
 		err = errFailedToPackOutput
+		res = []byte(err.Error())
 		return
 	}
 	return result, nil
@@ -114,6 +120,7 @@ func (b *SuaveRuntimeAdapter) confidentialInputs(input []byte) (res []byte, err 
 }
 
 func (b *SuaveRuntimeAdapter) confidentialStoreRetrieve(input []byte) (res []byte, err error) {
+	defer log.Info("confidentialStoreRetrieve", "res", res, "err", err)
 	var (
 		unpacked []interface{}
 		result   []byte
@@ -125,6 +132,7 @@ func (b *SuaveRuntimeAdapter) confidentialStoreRetrieve(input []byte) (res []byt
 	unpacked, err = artifacts.SuaveAbi.Methods["confidentialStoreRetrieve"].Inputs.Unpack(input)
 	if err != nil {
 		err = errFailedToUnpackInput
+		res = []byte(err.Error())
 		return
 	}
 
@@ -135,6 +143,7 @@ func (b *SuaveRuntimeAdapter) confidentialStoreRetrieve(input []byte) (res []byt
 
 	if err = mapstructure.Decode(unpacked[0], &bidId); err != nil {
 		err = errFailedToDecodeField
+		res = []byte(err.Error())
 		return
 	}
 
@@ -145,6 +154,7 @@ func (b *SuaveRuntimeAdapter) confidentialStoreRetrieve(input []byte) (res []byt
 	)
 
 	if output1, err = b.impl.confidentialStoreRetrieve(bidId, key); err != nil {
+		res = []byte(err.Error())
 		return
 	}
 

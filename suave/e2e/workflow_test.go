@@ -824,6 +824,12 @@ func WithRedisStoreBackend() frameworkOpt {
 	}
 }
 
+func WithGethP2PTransportOpt() frameworkOpt {
+	return func(c *frameworkConfig) {
+		c.suaveConfig.RedisStorePubsubUri = "p2p"
+	}
+}
+
 func WithRedisTransportOpt(t *testing.T) frameworkOpt {
 	mr := miniredis.RunT(t)
 	return func(c *frameworkConfig) {

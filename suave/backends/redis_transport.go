@@ -67,7 +67,7 @@ func (r *RedisPubSubTransport) Stop() error {
 	return nil
 }
 
-func (r *RedisPubSubTransport) Subscribe() (<-chan suave.DAMessage, context.CancelFunc) {
+func (r *RedisPubSubTransport) Subscribe(cb func(suave.DAMessage) error) context.CancelFunc {
 	ch := make(chan suave.DAMessage, 16)
 	ctx, cancel := context.WithCancel(r.ctx)
 
@@ -126,7 +126,21 @@ func (r *RedisPubSubTransport) Subscribe() (<-chan suave.DAMessage, context.Canc
 		}
 	}()
 
-	return ch, cancel
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				log.Info("Redis pubsub: closing")
+				return
+			case msg := <-ch:
+				if err := cb(msg); err != nil {
+					log.Warn("Redis pubsub: error while processing message", "msg", msg, "err", err)
+				}
+			}
+		}
+	}()
+
+	return cancel
 }
 
 func (r *RedisPubSubTransport) Publish(message suave.DAMessage) {

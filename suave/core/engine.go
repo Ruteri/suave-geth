@@ -104,22 +104,10 @@ func NewConfidentialStoreEngine(backend ConfidentialStoreBackend, transportTopic
 }
 
 func (e *ConfidentialStoreEngine) ProcessMessages() {
-	ch, cancel := e.transportTopic.Subscribe()
+	cancel := e.transportTopic.Subscribe(e.NewMessage)
 	defer cancel()
 
-	for {
-		select {
-		case <-e.ctx.Done(): // Stop() called
-			return
-		case msg := <-ch:
-			err := e.NewMessage(msg)
-			if err != nil {
-				log.Info("could not process new store message", "err", err)
-			} else {
-				log.Info("Message processed", "msg", msg)
-			}
-		}
-	}
+	<-e.ctx.Done() // Stop() called
 }
 
 func ExecutionNodeFromTransaction(tx *types.Transaction) (common.Address, error) {
@@ -360,8 +348,8 @@ type MockTransport struct{}
 func (MockTransport) Start() error { return nil }
 func (MockTransport) Stop() error  { return nil }
 
-func (MockTransport) Subscribe() (<-chan DAMessage, context.CancelFunc) {
-	return nil, func() {}
+func (MockTransport) Subscribe(func(DAMessage) error) context.CancelFunc {
+	return func() {}
 }
 func (MockTransport) Publish(DAMessage) {}
 

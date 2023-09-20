@@ -71,6 +71,7 @@ type Ethereum struct {
 	txPool             *txpool.TxPool
 	blockchain         *core.BlockChain
 	handler            *handler
+	extraProtos        []p2p.Protocol
 	ethDialCandidates  enode.Iterator
 	snapDialCandidates enode.Iterator
 	merger             *consensus.Merger
@@ -239,13 +240,6 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		confidentialStoreBackend = suave_backends.NewLocalConfidentialStore()
 	}
 
-	var confidentialStoreTransport suave.StoreTransportTopic
-	if config.Suave.RedisStorePubsubUri != "" {
-		confidentialStoreTransport = suave_backends.NewRedisPubSubTransport(config.Suave.RedisStorePubsubUri)
-	} else {
-		confidentialStoreTransport = suave.MockTransport{}
-	}
-
 	var suaveEthBackend suave.ConfidentialEthBackend
 	if config.Suave.SuaveEthRemoteBackendEndpoint != "" {
 		suaveEthBackend = suave_backends.NewRemoteEthBackend(config.Suave.SuaveEthRemoteBackendEndpoint)
@@ -255,6 +249,19 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 
 	suaveBidMempool := suave_backends.NewMempoolOnConfidentialStore(confidentialStoreBackend)
 	suaveDaSigner := &suave_backends.AccountManagerDASigner{Manager: eth.AccountManager()}
+
+	var confidentialStoreTransport suave.StoreTransportTopic
+	if config.Suave.RedisStorePubsubUri == "p2p" {
+		// TODO: multiplex transport if both p2p and redis enabled
+		p2pTransport := suave_backends.NewP2PTransport()
+		confidentialStoreTransport = p2pTransport
+		suaveProtocols := p2pTransport.MakeProtocols(suaveDaSigner.LocalAddresses(), eth.networkID, eth.ethDialCandidates)
+		eth.extraProtos = append(eth.extraProtos, suaveProtocols...)
+	} else if config.Suave.RedisStorePubsubUri != "" {
+		confidentialStoreTransport = suave_backends.NewRedisPubSubTransport(config.Suave.RedisStorePubsubUri)
+	} else {
+		confidentialStoreTransport = suave.MockTransport{}
+	}
 
 	confidentialStoreEngine, err := suave.NewConfidentialStoreEngine(confidentialStoreBackend, confidentialStoreTransport, suaveBidMempool, suaveDaSigner, types.LatestSigner(chainConfig))
 	if err != nil {
@@ -513,7 +520,7 @@ func (s *Ethereum) Protocols() []p2p.Protocol {
 	if s.config.SnapshotCache > 0 {
 		protos = append(protos, snap.MakeProtocols((*snapHandler)(s.handler), s.snapDialCandidates)...)
 	}
-	return protos
+	return append(protos, s.extraProtos...)
 }
 
 // Start implements node.Lifecycle, starting all internal goroutines needed by the
