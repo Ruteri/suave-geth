@@ -534,6 +534,12 @@ var (
 		Category: flags.SuaveCategory,
 	}
 
+	SuaveConfidentialStoreRemoteEndpointFlag = &cli.StringFlag{
+		Name:     "suave.confidential.remote-store-endpoint",
+		Usage:    "Remote store endpoint (default: local store)",
+		Category: flags.SuaveCategory,
+	}
+
 	// Account settings
 	UnlockedAccountFlag = &cli.StringFlag{
 		Name:     "unlock",
@@ -1663,7 +1669,7 @@ func CheckExclusive(ctx *cli.Context, args ...interface{}) {
 }
 
 func SetSuaveConfig(ctx *cli.Context, stack *node.Node, cfg *suave.Config) {
-	CheckExclusive(ctx, SuaveConfidentialStoreRedisEndpointFlag, SuaveConfidentialStorePebbleDbPathFlag)
+	CheckExclusive(ctx, SuaveConfidentialStoreRedisEndpointFlag, SuaveConfidentialStorePebbleDbPathFlag, SuaveConfidentialStoreRemoteEndpointFlag)
 	if ctx.IsSet(SuaveEthRemoteBackendEndpointFlag.Name) {
 		cfg.SuaveEthRemoteBackendEndpoint = ctx.String(SuaveEthRemoteBackendEndpointFlag.Name)
 	}
@@ -1678,6 +1684,10 @@ func SetSuaveConfig(ctx *cli.Context, stack *node.Node, cfg *suave.Config) {
 
 	if ctx.IsSet(SuaveConfidentialStorePebbleDbPathFlag.Name) {
 		cfg.PebbleDbPath = ctx.String(SuaveConfidentialStorePebbleDbPathFlag.Name)
+	}
+
+	if ctx.IsSet(SuaveConfidentialStoreRemoteEndpointFlag.Name) {
+		cfg.RemoteStoreEndpoint = ctx.String(SuaveConfidentialStoreRemoteEndpointFlag.Name)
 	}
 }
 

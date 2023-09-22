@@ -237,6 +237,8 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		confidentialStoreBackend = suave_backends.NewRedisStoreBackend(config.Suave.RedisStoreUri)
 	} else if config.Suave.PebbleDbPath != "" {
 		confidentialStoreBackend = suave_backends.NewPebbleStoreBackend(config.Suave.PebbleDbPath)
+	} else if config.Suave.RemoteStoreEndpoint != "" {
+		confidentialStoreBackend = suave_backends.NewRemoteStoreBackend(config.Suave.RemoteStoreEndpoint)
 	} else {
 		confidentialStoreBackend = suave_backends.NewLocalConfidentialStore()
 	}
