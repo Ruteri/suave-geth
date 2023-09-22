@@ -13,11 +13,11 @@ import (
 )
 
 var (
-	formatRedisBidKey = func(bidId suave.BidId) string {
+	formatBidKey = func(bidId suave.BidId) string {
 		return fmt.Sprintf("bid-%x", bidId)
 	}
 
-	formatRedisBidValueKey = func(bidId suave.BidId, key string) string {
+	formatBidValueKey = func(bidId suave.BidId, key string) string {
 		return fmt.Sprintf("bid-data-%x-%s", bidId, key)
 	}
 
@@ -68,7 +68,7 @@ func (r *RedisStoreBackend) Stop() error {
 }
 
 func (r *RedisStoreBackend) InitializeBid(bid suave.Bid) error {
-	key := formatRedisBidKey(bid.Id)
+	key := formatBidKey(bid.Id)
 
 	err := r.client.Get(r.ctx, key).Err()
 	if !errors.Is(err, redis.Nil) {
@@ -89,7 +89,7 @@ func (r *RedisStoreBackend) InitializeBid(bid suave.Bid) error {
 }
 
 func (r *RedisStoreBackend) FetchEngineBidById(bidId suave.BidId) (suave.Bid, error) {
-	key := formatRedisBidKey(bidId)
+	key := formatBidKey(bidId)
 
 	data, err := r.client.Get(r.ctx, key).Bytes()
 	if err != nil {
@@ -106,7 +106,7 @@ func (r *RedisStoreBackend) FetchEngineBidById(bidId suave.BidId) (suave.Bid, er
 }
 
 func (r *RedisStoreBackend) Store(bid suave.Bid, caller common.Address, key string, value []byte) (suave.Bid, error) {
-	storeKey := formatRedisBidValueKey(bid.Id, key)
+	storeKey := formatBidValueKey(bid.Id, key)
 	err := r.client.Set(r.ctx, storeKey, string(value), ffStoreTTL).Err()
 	if err != nil {
 		return suave.Bid{}, fmt.Errorf("unexpected redis error: %w", err)
@@ -116,7 +116,7 @@ func (r *RedisStoreBackend) Store(bid suave.Bid, caller common.Address, key stri
 }
 
 func (r *RedisStoreBackend) Retrieve(bid suave.Bid, caller common.Address, key string) ([]byte, error) {
-	storeKey := formatRedisBidValueKey(bid.Id, key)
+	storeKey := formatBidValueKey(bid.Id, key)
 	data, err := r.client.Get(r.ctx, storeKey).Bytes()
 	if err != nil {
 		return []byte{}, fmt.Errorf("unexpected redis error: %w, %s, %v", err, storeKey, r.client.Keys(context.TODO(), "*").String())

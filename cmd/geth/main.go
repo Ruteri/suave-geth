@@ -191,6 +191,7 @@ var (
 		utils.SuaveEthRemoteBackendEndpointFlag,
 		utils.SuaveConfidentialTransportRedisEndpointFlag,
 		utils.SuaveConfidentialStoreRedisEndpointFlag,
+		utils.SuaveConfidentialStorePebbleDbPathFlag,
 	}
 )
 
