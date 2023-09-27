@@ -347,6 +347,10 @@ func (b testBackend) ServiceFilter(ctx context.Context, session *bloombits.Match
 	panic("implement me")
 }
 
+func (b testBackend) RunMEVM(context.Context, *state.StateDB, *types.Header, *types.Transaction, []byte) (*types.Transaction, *core.ExecutionResult, error) {
+	panic("implement me")
+}
+
 func (b testBackend) BuildBlockFromTxs(ctx context.Context, buildArgs *suave.BuildBlockArgs, txs types.Transactions) (*types.Block, *big.Int, error) {
 	panic("implement me")
 }

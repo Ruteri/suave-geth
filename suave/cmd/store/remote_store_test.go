@@ -18,11 +18,14 @@ func TestRemoteStore(t *testing.T) {
 	defer cancel()
 
 	pebbleDir := t.TempDir()
+	remoteStoreBackend := suave_backends.NewPebbleStoreBackend(pebbleDir)
+	require.NoError(t, remoteStoreBackend.Start())
+	defer remoteStoreBackend.Stop()
 
 	go RunRemoteStore(ctx, Config{
 		Host:  "127.0.0.1",
 		Port:  18153,
-		Store: suave_backends.NewPebbleStoreBackend(pebbleDir),
+		Store: remoteStoreBackend,
 	})
 
 	remoteStore := suave_backends.NewRemoteStoreBackend("http://127.0.0.1:18153")
@@ -40,6 +43,7 @@ func TestRemoteStore(t *testing.T) {
 	require.NoError(t, err)
 
 	bid, err := remoteStore.FetchEngineBidById(testBid.Id)
+	require.NoError(t, err)
 	require.Equal(t, testBid, bid)
 
 	_, err = remoteStore.Store(testBid, common.Address{}, "xx", []byte{0x10})

@@ -49,6 +49,7 @@ func TestIsConfidential(t *testing.T) {
 
 	rpc := fr.suethSrv.RPCNode()
 
+	executionNodeAddress := fr.ExecutionNode()
 	chainId := hexutil.Big(*testSuaveGenesis.Config.ChainID)
 
 	{
@@ -58,6 +59,7 @@ func TestIsConfidential(t *testing.T) {
 			To:             &isConfidentialAddress,
 			IsConfidential: true,
 			ChainID:        &chainId,
+			ExecutionNode:  &executionNodeAddress,
 		}), "latest"))
 		require.Equal(t, []byte{1}, hexutil.MustDecode(result))
 
@@ -65,6 +67,7 @@ func TestIsConfidential(t *testing.T) {
 			To:             &isConfidentialAddress,
 			IsConfidential: false,
 			ChainID:        &chainId,
+			ExecutionNode:  &executionNodeAddress,
 		}, "latest"))
 		require.Equal(t, []byte{0}, hexutil.MustDecode(result))
 	}
@@ -130,6 +133,8 @@ func TestMempool(t *testing.T) {
 	fr := newFramework(t)
 	defer fr.Close()
 
+	executionNodeAddress := fr.ExecutionNode()
+
 	rpc := fr.suethSrv.RPCNode()
 
 	gas := hexutil.Uint64(1000000)
@@ -167,6 +172,7 @@ func TestMempool(t *testing.T) {
 			IsConfidential: true,
 			ChainID:        &chainId,
 			Data:           (*hexutil.Bytes)(&calldata),
+			ExecutionNode:  &executionNodeAddress,
 		}), "latest"))
 
 		unpacked, err := inoutAbi.Outputs.Unpack(simResult)
@@ -457,6 +463,8 @@ func TestBlockBuildingPrecompiles(t *testing.T) {
 	fr := newFramework(t, WithExecutionNode())
 	defer fr.Close()
 
+	executionNodeAddress := fr.ExecutionNode()
+
 	rpc := fr.suethSrv.RPCNode()
 
 	gas := hexutil.Uint64(1000000)
@@ -496,6 +504,7 @@ func TestBlockBuildingPrecompiles(t *testing.T) {
 			IsConfidential: true,
 			ChainID:        &chainId,
 			Data:           (*hexutil.Bytes)(&calldata),
+			ExecutionNode:  &executionNodeAddress,
 		}), "latest"))
 
 		require.Equal(t, 32, len(simResult))
@@ -541,6 +550,7 @@ func TestBlockBuildingPrecompiles(t *testing.T) {
 			IsConfidential: true,
 			ChainID:        &chainId,
 			Data:           (*hexutil.Bytes)(&packed),
+			ExecutionNode:  &executionNodeAddress,
 		}), "latest"))
 
 		require.NotNil(t, simResult)
@@ -803,6 +813,7 @@ type frameworkConfig struct {
 	executionNode     bool
 	redisStoreBackend bool
 	suaveConfig       suave.Config
+	keystore          *keystore.KeyStore
 }
 
 var defaultFrameworkConfig = frameworkConfig{
@@ -854,6 +865,18 @@ func newFramework(t *testing.T, opts ...frameworkOpt) *framework {
 	}
 
 	node, ethservice := startSuethService(t, testSuaveGenesis, nil, cfg.suaveConfig)
+
+	if cfg.keystore == nil {
+		keydir := t.TempDir()
+		keystore := keystore.NewPlaintextKeyStore(keydir)
+		acc, err := keystore.NewAccount("")
+		require.NoError(t, err)
+		require.NoError(t, keystore.TimedUnlock(acc, "", time.Hour))
+
+		ethservice.AccountManager().AddBackend(keystore)
+	} else {
+		ethservice.AccountManager().AddBackend(cfg.keystore)
+	}
 
 	f := &framework{
 		t:        t,
@@ -987,13 +1010,6 @@ func startSuethService(t *testing.T, genesis *core.Genesis, blocks []*types.Bloc
 	ethservice.SetEtherbase(testAddr)
 	ethservice.SetSynced()
 
-	keydir := t.TempDir()
-	keystore := keystore.NewPlaintextKeyStore(keydir)
-	acc, err := keystore.NewAccount("")
-	require.NoError(t, err)
-	require.NoError(t, keystore.TimedUnlock(acc, "", time.Hour))
-
-	ethservice.AccountManager().AddBackend(keystore)
 	return n, ethservice
 }
 

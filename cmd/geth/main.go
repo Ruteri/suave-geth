@@ -188,6 +188,7 @@ var (
 	}
 
 	suaveFlags = []cli.Flag{
+		utils.SuaveRemoteMEVMRunnerEndpointFlag,
 		utils.SuaveEthRemoteBackendEndpointFlag,
 		utils.SuaveConfidentialTransportRedisEndpointFlag,
 		utils.SuaveConfidentialStoreRedisEndpointFlag,

@@ -16,7 +16,7 @@ type ConfidentialComputeRequest struct {
 func (tx *ConfidentialComputeRequest) copy() TxData {
 	cpy := &ConfidentialComputeRequest{
 		ExecutionNode: tx.ExecutionNode,
-		Wrapped:       tx.Wrapped,
+		Wrapped:       *NewTx(tx.Wrapped.inner.copy()),
 		ChainID:       new(big.Int),
 	}
 
@@ -83,7 +83,7 @@ type SuaveTransaction struct {
 func (tx *SuaveTransaction) copy() TxData {
 	cpy := &SuaveTransaction{
 		ExecutionNode:              tx.ExecutionNode,
-		ConfidentialComputeRequest: tx.ConfidentialComputeRequest,
+		ConfidentialComputeRequest: *NewTx(tx.ConfidentialComputeRequest.inner.copy()),
 		ConfidentialComputeResult:  common.CopyBytes(tx.ConfidentialComputeResult),
 		ChainID:                    new(big.Int),
 		V:                          new(big.Int),

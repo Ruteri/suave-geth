@@ -27,11 +27,13 @@ type Config struct {
 
 func main() {
 	var (
-		host               = flag.String("host", "0.0.0.0", "host to listen on")
-		port               = flag.Int("port", 8153, "port to listen on")
-		redisStoreEndpoint = flag.String("suave.confidential.redis-store-endpoint", "", "Redis endpoint to connect to for confidential storage backend")
-		pebbleDbPath       = flag.String("suave.confidential.pebble-store-db-path", "pebble-dev", "Path to pebble db to use for confidential storage backend")
-		verbosity          = flag.Int("verbosity", int(log.LvlInfo), "log verbosity (0-5)")
+		host                   = flag.String("host", "0.0.0.0", "host to listen on")
+		port                   = flag.Int("port", 8153, "port to listen on")
+		pebbleDbPath           = flag.String("suave.confidential.pebble-store-db-path", "pebble-dev", "Path to pebble db to use for confidential storage backend")
+		redisStoreEndpoint     = flag.String("suave.confidential.redis-store-endpoint", "", "Redis endpoint to connect to for confidential storage backend (default: pebble)")
+		remoteStoreEndpoint    = flag.String("suave.confidential.remote-store-endpoint", "", "Remote store backend to connect to (default: pebble)")
+		redisTransportEndpoint = flag.String("suave.confidential.redis-transport-endpoint", "", "Redis endpoint to connect to for confidential store transport (default: mock)")
+		verbosity              = flag.Int("verbosity", int(log.LvlInfo), "log verbosity (0-5)")
 	)
 
 	flag.Parse()
@@ -45,10 +47,28 @@ func main() {
 		confidentialStoreBackend = suave_backends.NewMiniredisBackend()
 	} else if *redisStoreEndpoint != "" {
 		confidentialStoreBackend = suave_backends.NewRedisStoreBackend(*redisStoreEndpoint)
+	} else if *remoteStoreEndpoint != "" {
+		confidentialStoreBackend = suave_backends.NewRemoteStoreBackend(*remoteStoreEndpoint)
 	} else if *pebbleDbPath != "" {
 		confidentialStoreBackend = suave_backends.NewPebbleStoreBackend(*pebbleDbPath)
 	} else {
 		confidentialStoreBackend = suave_backends.NewLocalConfidentialStore()
+	}
+
+	// TODO: standalone p2p transport
+	var transportTopic suave.StoreTransportTopic
+	if *redisTransportEndpoint != "" {
+		transportTopic = suave_backends.NewRedisPubSubTransport(*redisTransportEndpoint)
+	} else {
+		transportTopic = suave.MockTransport{}
+	}
+
+	var suaveMempool suave.MempoolBackend = suave_backends.NewMempoolOnConfidentialStore(suave_backends.NewLocalConfidentialStore())
+
+	confidentialStoreEngine, err := suave.NewConfidentialStoreEngine(confidentialStoreBackend, transportTopic, suaveMempool, suave.MockSigner{}, suave.MockChainSigner{})
+	if err != nil {
+		log.Crit("failed to initialize engine", "err", err)
+		return
 	}
 
 	c := Config{
@@ -57,13 +77,13 @@ func main() {
 		Store: confidentialStoreBackend,
 	}
 
+	confidentialStoreEngine.Start()
+	defer confidentialStoreEngine.Stop()
+
 	RunRemoteStore(context.Background(), c)
 }
 
 func RunRemoteStore(ctx context.Context, c Config) {
-	c.Store.Start()
-	defer c.Store.Stop()
-
 	storeAdapter := newConfStoreHttpAdapter(c.Store)
 
 	r := mux.NewRouter()

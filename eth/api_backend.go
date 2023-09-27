@@ -49,7 +49,12 @@ type EthAPIBackend struct {
 	allowUnprotectedTxs bool
 	eth                 *Ethereum
 	gpo                 *gasprice.Oracle
+	mevmRunner          MEVMRunner
 	suaveBackend        *vm.SuaveExecutionBackend
+}
+
+type MEVMRunner interface {
+	RunMEVM(context.Context, *state.StateDB, *types.Header, *types.Transaction, []byte) (*types.Transaction, *core.ExecutionResult, error)
 }
 
 func (b *EthAPIBackend) SuaveBackend() *vm.SuaveExecutionBackend {
@@ -415,6 +420,10 @@ func (b *EthAPIBackend) Miner() *miner.Miner {
 
 func (b *EthAPIBackend) StartMining() error {
 	return b.eth.StartMining()
+}
+
+func (b *EthAPIBackend) RunMEVM(ctx context.Context, state *state.StateDB, header *types.Header, tx *types.Transaction, confidentialInputs []byte) (*types.Transaction, *core.ExecutionResult, error) {
+	return b.mevmRunner.RunMEVM(ctx, state, header, tx, confidentialInputs)
 }
 
 func (b *EthAPIBackend) BuildBlockFromTxs(ctx context.Context, buildArgs *suave.BuildBlockArgs, txs types.Transactions) (*types.Block, *big.Int, error) {

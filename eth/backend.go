@@ -55,6 +55,7 @@ import (
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/rpc"
+	suave_api "github.com/ethereum/go-ethereum/suave/api"
 	suave_backends "github.com/ethereum/go-ethereum/suave/backends"
 	suave "github.com/ethereum/go-ethereum/suave/core"
 )
@@ -270,7 +271,8 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		MempoolBackend:          suaveBidMempool,
 		ConfidentialEthBackend:  suaveEthBackend,
 	}
-	eth.APIBackend = &EthAPIBackend{stack.Config().ExtRPCEnabled(), stack.Config().AllowUnprotectedTxs, eth, nil, suaveBackend}
+
+	eth.APIBackend = &EthAPIBackend{stack.Config().ExtRPCEnabled(), stack.Config().AllowUnprotectedTxs, eth, nil, nil, suaveBackend}
 	if eth.APIBackend.allowUnprotectedTxs {
 		log.Info("Unprotected transactions allowed")
 	}
@@ -279,6 +281,12 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		gpoParams.Default = config.Miner.GasPrice
 	}
 	eth.APIBackend.gpo = gasprice.NewOracle(eth.APIBackend, gpoParams)
+
+	if config.Suave.RemoteMEVMRunnerEndpoint != "" {
+		eth.APIBackend.mevmRunner = suave_api.NewMEVMClient(config.Suave.RemoteMEVMRunnerEndpoint)
+	} else {
+		eth.APIBackend.mevmRunner = ethapi.NewMEvmAPI(eth.APIBackend)
+	}
 
 	// Setup DNS discovery iterators.
 	dnsclient := dnsdisc.NewClient(dnsdisc.Config{})
@@ -298,6 +306,19 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	stack.RegisterAPIs(eth.APIs())
 	stack.RegisterProtocols(eth.Protocols())
 	stack.RegisterLifecycle(eth)
+
+	if config.Suave.ServeMissingState {
+		stack.RegisterLifecycle(suave_api.NewMissingStateServer(config.Suave.MissingStateServerHost, config.Suave.MissingStateServerPort, eth.APIBackend))
+	}
+
+	if config.Suave.RunMEVMServer {
+		mevmSever := suave_api.NewMEVMServer(suave_api.MEVMConfig{
+			Host: config.Suave.MEVMServerHost,
+			Port: config.Suave.MEVMServerPort,
+			Api:  suave_api.NewMEVMApi(suaveBackend, eth.accountManager, config.Suave.MissingStateEndpoint),
+		})
+		stack.RegisterLifecycle(mevmSever)
+	}
 
 	// Successful startup; push a marker and check previous unclean shutdowns.
 	eth.shutdownTracker.MarkStartup()

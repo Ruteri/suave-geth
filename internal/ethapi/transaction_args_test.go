@@ -345,6 +345,10 @@ func (b *backendMock) SubscribeRemovedLogsEvent(ch chan<- core.RemovedLogsEvent)
 
 func (b *backendMock) Engine() consensus.Engine { return nil }
 
+func (b *backendMock) RunMEVM(context.Context, *state.StateDB, *types.Header, *types.Transaction, []byte) (*types.Transaction, *core.ExecutionResult, error) {
+	panic("implement me")
+}
+
 func (b *backendMock) BuildBlockFromTxs(ctx context.Context, buildArgs *suave.BuildBlockArgs, txs types.Transactions) (*types.Block, *big.Int, error) {
 	return nil, nil, errors.New("not implemented")
 }

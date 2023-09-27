@@ -510,6 +510,12 @@ var (
 	}
 
 	// Suave settings
+	SuaveRemoteMEVMRunnerEndpointFlag = &cli.StringFlag{
+		Name:     "suave.mevm.remote_endpoint",
+		Usage:    "Suave MEVM Runner endpoint to forward MEVM requests to (default: local MEVM)",
+		Category: flags.SuaveCategory,
+	}
+
 	SuaveEthRemoteBackendEndpointFlag = &cli.StringFlag{
 		Name:     "suave.eth.remote_endpoint",
 		Usage:    "Ethereum RPC endpoint to use as eth backend",
@@ -537,6 +543,48 @@ var (
 	SuaveConfidentialStoreRemoteEndpointFlag = &cli.StringFlag{
 		Name:     "suave.confidential.remote-store-endpoint",
 		Usage:    "Remote store endpoint (default: local store)",
+		Category: flags.SuaveCategory,
+	}
+
+	SuaveServeMissingStateFlag = &cli.BoolFlag{
+		Name:     "suave.missing-state",
+		Usage:    "Run missing state server",
+		Value:    suave.DefaultConfig.ServeMissingState,
+		Category: flags.SuaveCategory,
+	}
+
+	SuaveMissingStateServerHostFlag = &cli.StringFlag{
+		Name:     "suave.missing-state.host",
+		Usage:    "Host to serve missing state on",
+		Value:    suave.DefaultConfig.MissingStateServerHost,
+		Category: flags.SuaveCategory,
+	}
+
+	SuaveMissingStateServerPortFlag = &cli.IntFlag{
+		Name:     "suave.missing-state.port",
+		Usage:    "Port to serve missing state on",
+		Value:    suave.DefaultConfig.MissingStateServerPort,
+		Category: flags.SuaveCategory,
+	}
+
+	SuaveServeMEVMFlag = &cli.BoolFlag{
+		Name:     "suave.mevm",
+		Usage:    "Run MEVM server",
+		Value:    suave.DefaultConfig.RunMEVMServer,
+		Category: flags.SuaveCategory,
+	}
+
+	SuaveMEVMServerHostFlag = &cli.StringFlag{
+		Name:     "suave.mevm.host",
+		Usage:    "Host to serve memv on",
+		Value:    suave.DefaultConfig.MEVMServerHost,
+		Category: flags.SuaveCategory,
+	}
+
+	SuaveMEVMServerPortFlag = &cli.IntFlag{
+		Name:     "suave.mevm.port",
+		Usage:    "Port to serve missing state on",
+		Value:    suave.DefaultConfig.MEVMServerPort,
 		Category: flags.SuaveCategory,
 	}
 
@@ -1670,6 +1718,11 @@ func CheckExclusive(ctx *cli.Context, args ...interface{}) {
 
 func SetSuaveConfig(ctx *cli.Context, stack *node.Node, cfg *suave.Config) {
 	CheckExclusive(ctx, SuaveConfidentialStoreRedisEndpointFlag, SuaveConfidentialStorePebbleDbPathFlag, SuaveConfidentialStoreRemoteEndpointFlag)
+
+	if ctx.IsSet(SuaveRemoteMEVMRunnerEndpointFlag.Name) {
+		cfg.RemoteMEVMRunnerEndpoint = ctx.String(SuaveRemoteMEVMRunnerEndpointFlag.Name)
+	}
+
 	if ctx.IsSet(SuaveEthRemoteBackendEndpointFlag.Name) {
 		cfg.SuaveEthRemoteBackendEndpoint = ctx.String(SuaveEthRemoteBackendEndpointFlag.Name)
 	}
@@ -1688,6 +1741,30 @@ func SetSuaveConfig(ctx *cli.Context, stack *node.Node, cfg *suave.Config) {
 
 	if ctx.IsSet(SuaveConfidentialStoreRemoteEndpointFlag.Name) {
 		cfg.RemoteStoreEndpoint = ctx.String(SuaveConfidentialStoreRemoteEndpointFlag.Name)
+	}
+
+	if ctx.IsSet(SuaveServeMissingStateFlag.Name) {
+		cfg.ServeMissingState = ctx.Bool(SuaveServeMissingStateFlag.Name)
+	}
+
+	if ctx.IsSet(SuaveMissingStateServerHostFlag.Name) {
+		cfg.MissingStateServerHost = ctx.String(SuaveMissingStateServerHostFlag.Name)
+	}
+
+	if ctx.IsSet(SuaveMissingStateServerPortFlag.Name) {
+		cfg.MissingStateServerPort = ctx.Int(SuaveMissingStateServerPortFlag.Name)
+	}
+
+	if ctx.IsSet(SuaveServeMEVMFlag.Name) {
+		cfg.RunMEVMServer = ctx.Bool(SuaveServeMEVMFlag.Name)
+	}
+
+	if ctx.IsSet(SuaveMEVMServerHostFlag.Name) {
+		cfg.MEVMServerHost = ctx.String(SuaveMEVMServerHostFlag.Name)
+	}
+
+	if ctx.IsSet(SuaveMEVMServerPortFlag.Name) {
+		cfg.MEVMServerPort = ctx.Int(SuaveMEVMServerPortFlag.Name)
 	}
 }
 

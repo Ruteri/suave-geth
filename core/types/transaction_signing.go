@@ -271,7 +271,7 @@ func (s suaveSigner) Sender(tx *Transaction) (common.Address, error) {
 	var confidentialComputeRequestTx *Transaction = tx
 	if tx.Type() == SuaveTxType { // Verify ExecutionNode's signature
 		inner := tx.inner.(*SuaveTransaction)
-		confidentialComputeRequestTx = NewTx(&ConfidentialComputeRequest{ExecutionNode: inner.ExecutionNode, Wrapped: inner.ConfidentialComputeRequest, ChainID: inner.ChainID})
+		confidentialComputeRequestTx = &inner.ConfidentialComputeRequest
 
 		V, R, S := tx.RawSignatureValues()
 		// DynamicFee txs are defined to use 0 and 1 as their recovery

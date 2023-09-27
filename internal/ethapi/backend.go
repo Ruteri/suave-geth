@@ -99,6 +99,8 @@ type Backend interface {
 	BloomStatus() (uint64, uint64)
 	ServiceFilter(ctx context.Context, session *bloombits.MatcherSession)
 
+	RunMEVM(context.Context, *state.StateDB, *types.Header, *types.Transaction, []byte) (*types.Transaction, *core.ExecutionResult, error)
+
 	BuildBlockFromTxs(ctx context.Context, buildArgs *suave.BuildBlockArgs, txs types.Transactions) (*types.Block, *big.Int, error)
 	BuildBlockFromBundles(ctx context.Context, buildArgs *suave.BuildBlockArgs, bundles []types.SBundle) (*types.Block, *big.Int, error)
 }

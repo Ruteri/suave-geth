@@ -996,6 +996,7 @@ func DoCall(ctx context.Context, b Backend, args TransactionArgs, blockNrOrHash 
 	if state == nil || err != nil {
 		return nil, err
 	}
+
 	if err := overrides.Apply(state); err != nil {
 		return nil, err
 	}
@@ -1021,20 +1022,18 @@ func DoCall(ctx context.Context, b Backend, args TransactionArgs, blockNrOrHash 
 		blockOverrides.Apply(&blockCtx)
 	}
 
-	var suaveCtx *vm.SuaveContext
 	if args.IsConfidential {
-		suaveCtx = &vm.SuaveContext{
-			Backend:                      nil, // Set by backend, would be better to set it here already
-			ConfidentialComputeRequestTx: args.ToTransaction(),
+		var confidentialInputs []byte
+		if args.ConfidentialInputs != nil {
+			confidentialInputs = []byte(*args.ConfidentialInputs)
 		}
 
-		if args.ConfidentialInputs != nil {
-			suaveCtx.ConfidentialInputs = []byte(*args.ConfidentialInputs)
-		}
+		_, result, err := b.RunMEVM(ctx, state, header, args.toTransaction(), confidentialInputs)
+		return result, err
 	}
 
-	vmConfig := vm.Config{NoBaseFee: true, IsConfidential: args.IsConfidential}
-	evm, vmError := b.GetEVM(ctx, msg, state, header, &vmConfig, &blockCtx, suaveCtx)
+	vmConfig := vm.Config{NoBaseFee: true, IsConfidential: false}
+	evm, vmError := b.GetEVM(ctx, msg, state, header, &vmConfig, &blockCtx, nil)
 
 	// Wait for the context to be done and cancel the evm. Even if the
 	// EVM has finished, cancelling may be done (repeatedly)
@@ -1058,6 +1057,101 @@ func DoCall(ctx context.Context, b Backend, args TransactionArgs, blockNrOrHash 
 		return result, fmt.Errorf("err: %w (supplied gas %d)", err, msg.GasLimit)
 	}
 	return result, nil
+}
+
+type MEvmAPI struct {
+	b      Backend
+	signer types.Signer
+}
+
+func NewMEvmAPI(b Backend) *MEvmAPI {
+	signer := types.LatestSigner(b.ChainConfig())
+	return &MEvmAPI{
+		b:      b,
+		signer: signer,
+	}
+}
+
+func (s *MEvmAPI) RunMEVM(ctx context.Context, state *state.StateDB, header *types.Header, tx *types.Transaction, confidentialInputs []byte) (*types.Transaction, *core.ExecutionResult, error) {
+	// TODO: copy the inner, but only once
+	confidentialRequestTx, ok := types.CastTxInner[*types.ConfidentialComputeRequest](tx)
+	if !ok {
+		return nil, nil, errors.New("invalid transaction passed")
+	}
+
+	// Look up the wallet containing the requested execution node
+	account := accounts.Account{Address: confidentialRequestTx.ExecutionNode}
+	wallet, err := s.b.AccountManager().Find(account)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Get a new instance of the EVM.
+	msg, err := core.TransactionToMessage(tx, s.signer, header.BaseFee)
+	if err != nil {
+		// TODO: make sure the transaction is verified elsewhere!
+		// In case of DoCall (eth_call method) the tx is not signed.
+		// Consider enforcing err == nil and having a separate
+		//   function for serving eth_call.
+		log.Warn("Transaction not signed properly: %w", err)
+	}
+	blockCtx := core.NewEVMBlockContext(header, NewChainContext(ctx, s.b), nil)
+
+	suaveCtx := vm.SuaveContext{
+		ConfidentialComputeRequestTx: tx,
+		ConfidentialInputs:           confidentialInputs,
+	}
+
+	evm, vmError := s.b.GetEVM(ctx, msg, state, header, &vm.Config{IsConfidential: true}, &blockCtx, &suaveCtx)
+
+	// Wait for the context to be done and cancel the evm. Even if the
+	// EVM has finished, cancelling may be done (repeatedly)
+	go func() {
+		<-ctx.Done()
+		evm.Cancel()
+	}()
+
+	// Execute the message.
+	gp := new(core.GasPool).AddGas(header.GasLimit)
+
+	msg.SkipAccountChecks = true // validate elsewhere!
+	result, err := core.ApplyMessage(evm, msg, gp)
+	// If the timer caused an abort, return an appropriate error message
+	if evm.Cancelled() {
+		return nil, nil, fmt.Errorf("execution aborted")
+	}
+	if err != nil {
+		return tx, nil, fmt.Errorf("err: %w (supplied gas %d)", err, msg.GasLimit)
+	}
+	if err := vmError(); err != nil {
+		return nil, nil, err
+	}
+
+	if result.Failed() {
+		return nil, nil, fmt.Errorf("%w: %s", result.Err, hexutil.Encode(result.Revert()))
+	}
+
+	// Check for call in return
+	var computeResult []byte
+
+	args := abi.Arguments{abi.Argument{Type: abi.Type{T: abi.BytesTy}}}
+	unpacked, err := args.Unpack(result.ReturnData)
+	if err == nil && len(unpacked[0].([]byte))%32 == 4 {
+		// This is supposed to be the case for all confidential compute!
+		computeResult = unpacked[0].([]byte)
+	} else {
+		computeResult = result.ReturnData // Or should it be nil maybe in this case?
+	}
+
+	suaveResultTxData := &types.SuaveTransaction{ExecutionNode: confidentialRequestTx.ExecutionNode, ConfidentialComputeRequest: *tx, ConfidentialComputeResult: computeResult}
+
+	signed, err := wallet.SignTx(account, types.NewTx(suaveResultTxData), confidentialRequestTx.ChainID)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// will copy the inner tx again!
+	return signed, result, nil
 }
 
 func newRevertError(result *core.ExecutionResult) *revertError {
@@ -1904,7 +1998,6 @@ func (s *TransactionAPI) SendRawTransaction(ctx context.Context, input hexutil.B
 	}
 
 	if tx.Type() == types.ConfidentialComputeRequestTxType {
-		// TODO: only if not yet signed
 		// TODO: this is a huge dos vector!
 		ntx, err := s.executeConfidentialCall(ctx, tx, confidential)
 		if err != nil {
@@ -1921,96 +2014,19 @@ func (s *TransactionAPI) executeConfidentialCall(ctx context.Context, tx *types.
 		log.Info("Executing confidential compute request call finished", "runtime", time.Since(start))
 	}(time.Now())
 
-	// TODO: copy the inner, but only once
-	confidentialRequestTx, ok := types.CastTxInner[*types.ConfidentialComputeRequest](tx)
-	if !ok {
-		return nil, errors.New("invalid transaction passed")
-	}
-
-	// Look up the wallet containing the requested execution node
-	account := accounts.Account{Address: confidentialRequestTx.ExecutionNode}
-	wallet, err := s.b.AccountManager().Find(account)
-	if err != nil {
-		return nil, err
-	}
-
 	state, header, err := s.b.StateAndHeaderByNumber(ctx, rpc.LatestBlockNumber)
 	if state == nil || err != nil {
 		return nil, err
 	}
 
-	var cancel context.CancelFunc
-	ctx, cancel = context.WithCancel(ctx)
-
-	// Make sure the context is cancelled when the call has completed
-	// this makes sure resources are cleaned up.
-	defer cancel()
-
-	// Get a new instance of the EVM.
-	msg, err := core.TransactionToMessage(tx, s.signer, header.BaseFee)
-	if err != nil {
-		return nil, err
-	}
-	blockCtx := core.NewEVMBlockContext(header, NewChainContext(ctx, s.b), nil)
-
-	suaveCtx := vm.SuaveContext{
-		ConfidentialComputeRequestTx: tx,
-	}
-
+	confidentialInputBytes := []byte{}
 	if confidential != nil {
-		suaveCtx.ConfidentialInputs = []byte(*confidential)
+		confidentialInputBytes = []byte(*confidential)
 	}
 
-	evm, vmError := s.b.GetEVM(ctx, msg, state, header, &vm.Config{IsConfidential: true}, &blockCtx, &suaveCtx)
+	resTx, _, err := s.b.RunMEVM(ctx, state, header, tx, confidentialInputBytes)
 
-	// Wait for the context to be done and cancel the evm. Even if the
-	// EVM has finished, cancelling may be done (repeatedly)
-	go func() {
-		<-ctx.Done()
-		evm.Cancel()
-	}()
-
-	// Execute the message.
-	gp := new(core.GasPool).AddGas(header.GasLimit)
-
-	msg.SkipAccountChecks = true // validate elsewhere!
-	result, err := core.ApplyMessage(evm, msg, gp)
-	// If the timer caused an abort, return an appropriate error message
-	if evm.Cancelled() {
-		return nil, fmt.Errorf("execution aborted")
-	}
-	if err != nil {
-		return tx, fmt.Errorf("err: %w (supplied gas %d)", err, msg.GasLimit)
-	}
-	if err := vmError(); err != nil {
-		return nil, err
-	}
-
-	if result.Failed() {
-		return nil, fmt.Errorf("%w: %s", result.Err, hexutil.Encode(result.Revert()))
-	}
-
-	// Check for call in return
-	var computeResult []byte
-
-	args := abi.Arguments{abi.Argument{Type: abi.Type{T: abi.BytesTy}}}
-	unpacked, err := args.Unpack(result.ReturnData)
-	if err == nil && len(unpacked[0].([]byte))%32 == 4 {
-		// This is supposed to be the case for all confidential compute!
-		computeResult = unpacked[0].([]byte)
-	} else {
-		computeResult = result.ReturnData // Or should it be nil maybe in this case?
-	}
-
-	suaveResultTxData := &types.SuaveTransaction{ExecutionNode: confidentialRequestTx.ExecutionNode, ConfidentialComputeRequest: confidentialRequestTx.Wrapped, ConfidentialComputeResult: computeResult}
-
-	signed, err := wallet.SignTx(account, types.NewTx(suaveResultTxData), s.b.ChainConfig().ChainID)
-	if err != nil {
-		return nil, err
-	}
-
-	// will copy the inner tx again!
-	return signed, nil
+	return resTx, err
 }
 
 // Sign calculates an ECDSA signature for:
