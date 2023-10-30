@@ -23,6 +23,33 @@ contract AnyBidContract {
 	}
 }
 
+contract StoreTestContract is AnyBidContract {
+	event DataEvent(
+		bytes data
+	);
+
+	function store(bytes memory dataIn) public returns (bytes memory) {
+		address[] memory allowedPeekers = new address[](1);
+		allowedPeekers[0] =address(this);
+		address[] memory allowedStores;
+		Suave.Bid memory bid = Suave.newBid(0, allowedPeekers, allowedStores, "test:v0");
+		Suave.confidentialStoreStore(bid.id, "testdata", dataIn);
+		emit BidEvent(bid.id, bid.decryptionCondition, bid.allowedPeekers);
+		return bytes.concat(this.emitBid.selector, abi.encode(bid));
+	}
+
+	function fetch(Suave.BidId bidId) public returns (bytes memory) {
+		bytes memory data = Suave.confidentialStoreRetrieve(bidId, "testdata");
+		emit DataEvent(data);
+		revert Suave.PeekerReverted(address(this), data);
+	}
+
+	function storeConfidential() public returns (bytes memory) {
+		return this.store(Suave.confidentialInputs());
+	}
+}
+
+
 contract BundleBidContract is AnyBidContract {
 
 	function newBid(uint64 decryptionCondition, address[] memory bidAllowedPeekers, address[] memory bidAllowedStores) external payable returns (bytes memory) {

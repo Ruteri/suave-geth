@@ -25,7 +25,7 @@ func cmdSendBundle() {
 	var (
 		suaveRpc                = flagset.String("suave_rpc", "http://127.0.0.1:8545", "address of suave rpc")
 		executionNodeAddressHex = flagset.String("ex_node_addr", "0x4E2B0c0e428AE1CDE26d5BcF17Ba83f447068E5B", "wallet address of execution node")
-		goerliRpc               = flagset.String("goerli_rpc", "http://127.0.0.1:8545", "address of goerli rpc")
+		goerliRpc               = flagset.String("goerli_rpc", "http://127.0.0.1:8555", "address of goerli rpc")
 		privKeyHex              = flagset.String("privkey", "", "private key as hex (for testing)")
 		verbosity               = flagset.Int("verbosity", int(log.LvlInfo), "log verbosity (0-5)")
 		privKey                 *ecdsa.PrivateKey
@@ -60,7 +60,7 @@ func cmdSendBundle() {
 
 	gas := hexutil.Uint64(1000000)
 
-	{ // Sanity check
+	{ /* // Sanity check
 		var result string
 		rpcErr := suaveClient.Call(&result, "eth_call", ethapi.TransactionArgs{
 			To:             &isConfidentialAddress,
@@ -74,6 +74,7 @@ func cmdSendBundle() {
 		}
 
 		log.Info("Suave node seems sane, continuing")
+		*/
 	}
 
 	addr := crypto.PubkeyToAddress(privKey.PublicKey)
@@ -150,17 +151,19 @@ func cmdSendBundle() {
 		confidentialRequestInner.Data = calldata
 		confidentialRequestInner.ExecutionNode = executionNodeAddress
 
+		confidentialDataBytes, err := bundleBidAbi.Methods["fetchBidConfidentialBundleData"].Outputs.Pack(ethBundleBytes)
+		RequireNoErrorf(err, "could not pack bundle confidential data: %v", err)
+
+		confidentialRequestInner.ConfidentialInputs = confidentialDataBytes
+
 		confidentialRequestTx, err := types.SignTx(types.NewTx(&confidentialRequestInner), suaveSigner, privKey)
 		RequireNoErrorf(err, "could not sign confidentialRequestTx: %v", err)
 
 		confidentialRequestTxBytes, err := confidentialRequestTx.MarshalBinary()
 		RequireNoErrorf(err, "could not marshal confidentialRequestTx: %v", err)
 
-		confidentialDataBytes, err := bundleBidAbi.Methods["fetchBidConfidentialBundleData"].Outputs.Pack(ethBundleBytes)
-		RequireNoErrorf(err, "could not pack bundle confidential data: %v", err)
-
 		var confidentialRequestTxHash common.Hash
-		rpcErr := suaveClient.Call(&confidentialRequestTxHash, "eth_sendRawTransaction", hexutil.Encode(confidentialRequestTxBytes), hexutil.Encode(confidentialDataBytes))
+		rpcErr := suaveClient.Call(&confidentialRequestTxHash, "eth_sendRawTransaction", hexutil.Encode(confidentialRequestTxBytes))
 		RequireNoErrorf(rpcErr, "could not send bundle bid: %v", unwrapPeekerError(rpcErr))
 		suaveTxHashes = append(suaveTxHashes, confidentialRequestTxHash)
 	}

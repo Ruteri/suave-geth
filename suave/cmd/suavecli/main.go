@@ -20,6 +20,7 @@ import (
 )
 
 var commands = map[string]func(){
+	"testStore": cmdTestStore,
 	// deploy
 	"deployBlockSenderContract": cmdDeployBlockSenderContract,
 	"deployMevShareContract":    cmdDeployMevShareContract,
