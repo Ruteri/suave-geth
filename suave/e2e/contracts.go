@@ -15,6 +15,8 @@ var (
 	MevShareBidContract          = newArtifact("bids.sol/MevShareBidContract.json")
 	BundleBidContract            = newArtifact("bids.sol/BundleBidContract.json")
 	EthBundleSenderContract      = newArtifact("bids.sol/EthBundleSenderContract.json")
+	BidCreatorContract           = newArtifact("bids.sol/BidCreator.json")
+	BidContractContract          = newArtifact("bids.sol/BidContract.json")
 	MevShareBundleSenderContract = newArtifact("bids.sol/MevShareBundleSenderContract.json")
 	buildEthBlockContract        = newArtifact("bids.sol/EthBlockBidContract.json")
 	ethBlockBidSenderContract    = newArtifact("bids.sol/EthBlockBidSenderContract.json")

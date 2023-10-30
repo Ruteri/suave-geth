@@ -346,6 +346,70 @@ func TestBundleBid(t *testing.T) {
 	}
 }
 
+func TestBidCreator(t *testing.T) {
+	fr := newFramework(t)
+	defer fr.Close()
+
+	clt := fr.NewSDKClient()
+
+	var bidCreatorContract *sdk.Contract
+
+	{
+		txRes, err := sdk.DeployContract(BidCreatorContract.Code, clt)
+		require.NoError(t, err)
+
+		fr.suethSrv.ProgressChain()
+
+		receipt, err := txRes.Wait()
+		require.NoError(t, err)
+		bidCreatorContract = sdk.GetContract(receipt.ContractAddress, BidCreatorContract.Abi, clt)
+	}
+
+	{
+		uninitializedBidData := types.UninitializedBid{
+			DecryptionCondition: uint64(1),
+			AllowedPeekers:      []common.Address{{0x42}},
+			AllowedStores:       []common.Address{{0x43}},
+			Version:             "xxx",
+		}
+		txRes, err := bidCreatorContract.SendTransaction("initialize", []interface{}{uninitializedBidData}, nil)
+		require.NoError(t, err)
+
+		fr.suethSrv.ProgressChain()
+
+		receipt, err := txRes.Wait()
+		require.NoError(t, err)
+		require.Equal(t, uint64(1), receipt.Status)
+
+		require.Equal(t, 2, len(receipt.Logs))
+		unpackedBidContractEvent, err := BidCreatorContract.Abi.Events["BidContractEvent"].Inputs.Unpack(receipt.Logs[0].Data)
+		require.NoError(t, err)
+
+		unpackedBidEvent, err := BidContractContract.Abi.Events["BidEvent"].Inputs.Unpack(receipt.Logs[1].Data)
+		require.NoError(t, err)
+
+		bidEvent := unpackedBidContractEvent[1].(struct {
+			Id                  [16]uint8        "json:\"id\""
+			Salt                [16]uint8        "json:\"salt\""
+			DecryptionCondition uint64           "json:\"decryptionCondition\""
+			AllowedPeekers      []common.Address "json:\"allowedPeekers\""
+			AllowedStores       []common.Address "json:\"allowedStores\""
+			Version             string           "json:\"version\""
+		})
+
+		require.Equal(t, uninitializedBidData, types.UninitializedBid{
+			DecryptionCondition: bidEvent.DecryptionCondition,
+			AllowedPeekers:      bidEvent.AllowedPeekers,
+			AllowedStores:       bidEvent.AllowedStores[:1],
+			Version:             bidEvent.Version,
+		})
+
+		require.Equal(t, bidEvent.Id, unpackedBidEvent[0].([16]byte))
+		require.Equal(t, uninitializedBidData.DecryptionCondition, unpackedBidEvent[1].(uint64))
+		require.Equal(t, uninitializedBidData.AllowedPeekers, unpackedBidEvent[2].([]common.Address))
+	}
+}
+
 func TestBundleSenderContract(t *testing.T) {
 	skOpt, bundleSigningKeyPub := WithBundleSigningKeyOpt(t)
 	fr := newFramework(t, skOpt)

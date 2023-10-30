@@ -26,6 +26,13 @@ library Suave {
         Withdrawal[] withdrawals;
     }
 
+    struct UninitializedBid {
+        uint64 decryptionCondition;
+        address[] allowedPeekers;
+        address[] allowedStores;
+        string version;
+    }
+
     struct Withdrawal {
         uint64 index;
         uint64 validator;

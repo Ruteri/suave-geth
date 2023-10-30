@@ -2,6 +2,16 @@ types:
   - name: BidId
     type: bytes16
 structs:
+  - name: UninitializedBid
+    fields:
+      - name: decryptionCondition
+        type: uint64
+      - name: allowedPeekers
+        type: address[]
+      - name: allowedStores
+        type: address[]
+      - name: version
+        type: string
   - name: Bid
     fields:
       - name: id

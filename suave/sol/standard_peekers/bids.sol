@@ -23,6 +23,41 @@ contract AnyBidContract {
 	}
 }
 
+contract BidContract is AnyBidContract {
+	Suave.Bid bid;
+	constructor(Suave.Bid memory _bid) {
+		bid = _bid;
+	}
+
+	function emitBid() public {
+		emit BidEvent(bid.id, bid.decryptionCondition, bid.allowedPeekers);
+	}
+
+	// methods for manipulating the bid can be defined as a part of this specific contract
+}
+
+/* Predeployed */
+contract BidCreator {
+	BidContract[] bidContracts;
+
+	event BidContractEvent(
+		address,
+		Suave.Bid
+	);
+
+	function emitBidContractEvent(Suave.Bid memory bid) public {
+		BidContract bc = new BidContract(bid);
+		bidContracts.push(bc);
+		emit BidContractEvent(address(bc), bid);
+		bc.emitBid();
+	}
+
+	function initialize(Suave.UninitializedBid calldata bid) public returns (bytes memory) {
+		Suave.Bid memory _bid = Suave.newBid(bid.decryptionCondition, bid.allowedPeekers, bid.allowedStores, bid.version);
+		return bytes.concat(this.emitBidContractEvent.selector, abi.encode(_bid));
+	}
+}
+
 contract BundleBidContract is AnyBidContract {
 
 	function newBid(uint64 decryptionCondition, address[] memory bidAllowedPeekers, address[] memory bidAllowedStores) external payable returns (bytes memory) {
