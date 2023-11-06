@@ -18,9 +18,11 @@
 package utils
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -30,6 +32,7 @@ import (
 	"os"
 	"path/filepath"
 	godebug "runtime/debug"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -70,6 +73,8 @@ import (
 	"github.com/ethereum/go-ethereum/p2p/netutil"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rpc"
+	suave "github.com/ethereum/go-ethereum/suave/core"
+	"github.com/ethereum/go-ethereum/suave/genesis"
 	"github.com/ethereum/go-ethereum/trie"
 	"github.com/ethereum/go-ethereum/trie/triedb/hashdb"
 	"github.com/ethereum/go-ethereum/trie/triedb/pathdb"
@@ -156,6 +161,17 @@ var (
 		Usage:    "Holesky network: pre-configured proof-of-stake test network",
 		Category: flags.EthCategory,
 	}
+	SuaveFlag = &cli.BoolFlag{
+		Name:     "suave",
+		Usage:    "suave network: pre-configured proof-of-authority suave test network",
+		Category: flags.EthCategory,
+	}
+	CustomChainFlag = &cli.StringFlag{
+		Name:     "chain",
+		Usage:    "Path to a custom chain specification file",
+		Category: flags.EthCategory,
+	}
+
 	// Dev mode
 	DeveloperFlag = &cli.BoolFlag{
 		Name:     "dev",
@@ -499,6 +515,51 @@ var (
 		Usage:    "Specify the maximum time allowance for creating a new payload",
 		Value:    ethconfig.Defaults.Miner.NewPayloadTimeout,
 		Category: flags.MinerCategory,
+	}
+
+	// Suave settings
+	SuaveEthRemoteBackendEndpointFlag = &cli.StringFlag{
+		Name:     "suave.eth.remote_endpoint",
+		Usage:    "Ethereum RPC endpoint to use as eth backend",
+		Category: flags.SuaveCategory,
+	}
+
+	SuaveConfidentialTransportRedisEndpointFlag = &cli.StringFlag{
+		Name:     "suave.confidential.redis-transport-endpoint",
+		Usage:    "Redis endpoint to use as confidential store transport (default: no transport)",
+		Category: flags.SuaveCategory,
+	}
+
+	SuaveConfidentialStoreRedisEndpointFlag = &cli.StringFlag{
+		Name:     "suave.confidential.redis-store-endpoint",
+		Usage:    "Redis endpoint to use as confidential storage backend (default: local store)",
+		Category: flags.SuaveCategory,
+	}
+
+	SuaveConfidentialStorePebbleDbPathFlag = &cli.StringFlag{
+		Name:     "suave.confidential.pebble-store-db-path",
+		Usage:    "Path to pebble db to use for confidential storage backend (default: local store)",
+		Category: flags.SuaveCategory,
+	}
+
+	SuaveEthBundleSigningKeyFlag = &cli.StringFlag{
+		Name:     "suave.eth.bundle-signing-key",
+		EnvVars:  []string{"SUAVE_ETH_BUNDLE_SIGNING_KEY"},
+		Usage:    "Signing key to be used when signing bundles (ecdsa) [default: random]",
+		Category: flags.SuaveCategory,
+	}
+
+	SuaveEthBlockSigningKeyFlag = &cli.StringFlag{
+		Name:     "suave.eth.signing-key",
+		EnvVars:  []string{"SUAVE_ETH_BLOCK_SIGNING_KEY"},
+		Usage:    "Signing key to be used when signing blocks (bls) [default: random]",
+		Category: flags.SuaveCategory,
+	}
+
+	SuaveDevModeFlag = &cli.BoolFlag{
+		Name:     "suave.dev",
+		Usage:    "Dev mode for suave",
+		Category: flags.SuaveCategory,
 	}
 
 	// Account settings
@@ -950,8 +1011,10 @@ var (
 	// TestnetFlags is the flag group of all built-in supported testnets.
 	TestnetFlags = []cli.Flag{
 		GoerliFlag,
+		SuaveFlag,
 		SepoliaFlag,
 		HoleskyFlag,
+		CustomChainFlag,
 	}
 	// NetworkFlags is the flag group of all built-in supported networks.
 	NetworkFlags = append([]cli.Flag{MainnetFlag}, TestnetFlags...)
@@ -980,6 +1043,9 @@ func MakeDataDir(ctx *cli.Context) string {
 		}
 		if ctx.Bool(HoleskyFlag.Name) {
 			return filepath.Join(path, "holesky")
+		}
+		if ctx.Bool(SuaveFlag.Name) {
+			return filepath.Join(path, "suave")
 		}
 		return path
 	}
@@ -1043,6 +1109,14 @@ func setBootstrapNodes(ctx *cli.Context, cfg *p2p.Config) {
 			urls = params.SepoliaBootnodes
 		case ctx.Bool(GoerliFlag.Name):
 			urls = params.GoerliBootnodes
+		case ctx.Bool(SuaveFlag.Name):
+			return // None!
+		case ctx.IsSet(CustomChainFlag.Name):
+			jsonGenesis, err := readJSONGenesis(ctx.String(CustomChainFlag.Name))
+			if err != nil {
+				Fatalf("Failed to read bootstrap nodes from genesis %s: %v", CustomChainFlag.Name, err)
+			}
+			urls = jsonGenesis.Bootnodes
 		}
 	}
 	cfg.BootstrapNodes = mustParseBootnodes(urls)
@@ -1493,6 +1567,15 @@ func SetDataDir(ctx *cli.Context, cfg *node.Config) {
 		cfg.DataDir = filepath.Join(node.DefaultDataDir(), "sepolia")
 	case ctx.Bool(HoleskyFlag.Name) && cfg.DataDir == node.DefaultDataDir():
 		cfg.DataDir = filepath.Join(node.DefaultDataDir(), "holesky")
+	case ctx.Bool(SuaveFlag.Name) && cfg.DataDir == node.DefaultDataDir():
+		cfg.DataDir = filepath.Join(node.DefaultDataDir(), "suave")
+	case ctx.IsSet(CustomChainFlag.Name) && cfg.DataDir == node.DefaultDataDir():
+		genesis, err := readJSONGenesis(ctx.String(CustomChainFlag.Name))
+		if err == nil {
+			// best effort, it will raise an error later on, we do not need to
+			// catch it here.
+			cfg.DataDir = filepath.Join(node.DefaultDataDir(), genesis.Name)
+		}
 	}
 }
 
@@ -1646,10 +1729,37 @@ func CheckExclusive(ctx *cli.Context, args ...interface{}) {
 	}
 }
 
+func SetSuaveConfig(ctx *cli.Context, stack *node.Node, cfg *suave.Config) {
+	CheckExclusive(ctx, SuaveConfidentialStoreRedisEndpointFlag, SuaveConfidentialStorePebbleDbPathFlag)
+	if ctx.IsSet(SuaveEthRemoteBackendEndpointFlag.Name) {
+		cfg.SuaveEthRemoteBackendEndpoint = ctx.String(SuaveEthRemoteBackendEndpointFlag.Name)
+	}
+
+	if ctx.IsSet(SuaveConfidentialTransportRedisEndpointFlag.Name) {
+		cfg.RedisStorePubsubUri = ctx.String(SuaveConfidentialTransportRedisEndpointFlag.Name)
+	}
+
+	if ctx.IsSet(SuaveConfidentialStoreRedisEndpointFlag.Name) {
+		cfg.RedisStoreUri = ctx.String(SuaveConfidentialStoreRedisEndpointFlag.Name)
+	}
+
+	if ctx.IsSet(SuaveConfidentialStorePebbleDbPathFlag.Name) {
+		cfg.PebbleDbPath = ctx.String(SuaveConfidentialStorePebbleDbPathFlag.Name)
+	}
+
+	if ctx.IsSet(SuaveEthBundleSigningKeyFlag.Name) {
+		cfg.EthBundleSigningKeyHex = ctx.String(SuaveEthBundleSigningKeyFlag.Name)
+	}
+
+	if ctx.IsSet(SuaveEthBlockSigningKeyFlag.Name) {
+		cfg.EthBlockSigningKeyHex = ctx.String(SuaveEthBlockSigningKeyFlag.Name)
+	}
+}
+
 // SetEthConfig applies eth-related command line flags to the config.
 func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 	// Avoid conflicting network flags
-	CheckExclusive(ctx, MainnetFlag, DeveloperFlag, GoerliFlag, SepoliaFlag, HoleskyFlag)
+	CheckExclusive(ctx, MainnetFlag, DeveloperFlag, GoerliFlag, SepoliaFlag, HoleskyFlag, SuaveFlag, CustomChainFlag)
 	CheckExclusive(ctx, LightServeFlag, SyncModeFlag, "light")
 	CheckExclusive(ctx, DeveloperFlag, ExternalSignerFlag) // Can't use both ephemeral unlocked and external signer
 
@@ -1816,6 +1926,12 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 		}
 		cfg.Genesis = core.DefaultGoerliGenesisBlock()
 		SetDNSDiscoveryDefaults(cfg, params.GoerliGenesisHash)
+	case ctx.Bool(SuaveFlag.Name):
+		if !ctx.IsSet(NetworkIdFlag.Name) {
+			cfg.NetworkId = 16813125
+		}
+		cfg.Genesis = core.DefaultSuaveGenesisBlock()
+		SetDNSDiscoveryDefaults(cfg, params.SuaveGenesisHash)
 	case ctx.Bool(DeveloperFlag.Name):
 		if !ctx.IsSet(NetworkIdFlag.Name) {
 			cfg.NetworkId = 1337
@@ -1876,6 +1992,27 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 		if !ctx.IsSet(MinerGasPriceFlag.Name) {
 			cfg.Miner.GasPrice = big.NewInt(1)
 		}
+	case ctx.IsSet(CustomChainFlag.Name):
+		// initialize the chain from a genesis file
+		genesis, genesisHash, err := initCustomGenesis(ctx, stack, ctx.String(CustomChainFlag.Name))
+		if err != nil {
+			Fatalf("Failed to initialize genesis from file: %v", err)
+		}
+		cfg.Genesis = genesis
+
+		// use the chain id from the genesis file as network id
+		chainID := genesis.Config.ChainID.Uint64()
+		if ctx.IsSet(NetworkIdFlag.Name) {
+			netID := ctx.Uint64(NetworkIdFlag.Name)
+			if netID != chainID {
+				Fatalf("Network ID mismatch: %d (genesis) vs %d (flag)", chainID, netID)
+			}
+		}
+		cfg.NetworkId = chainID
+
+		// use the hash generated by the genesis file for dns discovery
+		SetDNSDiscoveryDefaults(cfg, genesisHash)
+
 	default:
 		if cfg.NetworkId == 1 {
 			SetDNSDiscoveryDefaults(cfg, params.MainnetGenesisHash)
@@ -2130,6 +2267,8 @@ func MakeGenesis(ctx *cli.Context) *core.Genesis {
 		genesis = core.DefaultSepoliaGenesisBlock()
 	case ctx.Bool(GoerliFlag.Name):
 		genesis = core.DefaultGoerliGenesisBlock()
+	case ctx.Bool(SuaveFlag.Name):
+		genesis = core.DefaultSuaveGenesisBlock()
 	case ctx.Bool(DeveloperFlag.Name):
 		Fatalf("Developer chains are ephemeral")
 	}
@@ -2234,4 +2373,93 @@ func MakeTrieDatabase(ctx *cli.Context, disk ethdb.Database, preimage bool, read
 		config.PathDB = pathdb.Defaults
 	}
 	return trie.NewDatabase(disk, config)
+}
+
+// jsonGenesis is an extension over the traditional Geth genesis file
+type jsonGenesis struct {
+	core *core.Genesis `json:"-"`
+
+	Name string `json:"name"`
+
+	Config struct {
+		Clique struct {
+			// Signers is the list of initial validators of the clique protocol
+			InitialSigners []string `json:"initial_signers"`
+		} `json:"clique,omitempty"`
+	} `json:"config"`
+
+	Bootnodes []string `json:"bootnodes"`
+}
+
+func readJSONGenesis(genesisPath string) (*jsonGenesis, error) {
+	genesisRaw, err := genesis.Load(genesisPath)
+	if err != nil {
+		return nil, err
+	}
+
+	coreGenesis := new(core.Genesis)
+	if err := json.Unmarshal(genesisRaw, coreGenesis); err != nil {
+		return nil, fmt.Errorf("invalid genesis file: %v", err)
+	}
+
+	genesis := new(jsonGenesis)
+	if err := json.Unmarshal(genesisRaw, genesis); err != nil {
+		return nil, fmt.Errorf("invalid genesis file: %v", err)
+	}
+	if genesis.Name == "" {
+		return nil, fmt.Errorf("genesis.json file must have a name field")
+	}
+
+	genesis.core = coreGenesis
+	return genesis, nil
+}
+
+// initCustomGenesis is a simplified version of the initGenesis command
+func initCustomGenesis(ctx *cli.Context, stack *node.Node, genesisPath string) (*core.Genesis, common.Hash, error) {
+	genesis, err := readJSONGenesis(genesisPath)
+	if err != nil {
+		return nil, common.Hash{}, err
+	}
+
+	// if we are running Clique, read the initial validator set from the Config.Clique.Signers path
+	// and build the extra genesis data as [(32 byte), signer1, signer2, (65 byte)] where the
+	// signers are sorted by their address
+	if genesis.core.Config.Clique != nil {
+		signersStr := genesis.Config.Clique.InitialSigners
+		if len(signersStr) == 0 {
+			return nil, common.Hash{}, fmt.Errorf("no initial signers for Clique")
+		}
+
+		signers := make([]common.Address, len(signersStr))
+		for i, signerStr := range signersStr {
+			signers[i] = common.HexToAddress(signerStr)
+		}
+
+		sort.Slice(signers, func(i, j int) bool {
+			return bytes.Compare(signers[i][:], signers[j][:]) < 0
+		})
+
+		extra := make([]byte, 32)
+		for _, addr := range signers {
+			extra = append(extra, addr.Bytes()...)
+		}
+		extra = append(extra, make([]byte, 65)...)
+		genesis.core.ExtraData = extra
+	}
+
+	chaindb, err := stack.OpenDatabaseWithFreezer("chaindata", 0, 0, ctx.String(AncientFlag.Name), "", false)
+	if err != nil {
+		return nil, common.Hash{}, err
+	}
+	triedb := trie.NewDatabase(chaindb, &trie.Config{
+		Preimages: false,
+	})
+	_, hash, err := core.SetupGenesisBlock(chaindb, triedb, genesis.core)
+	if err != nil {
+		return nil, common.Hash{}, err
+	}
+	chaindb.Close()
+
+	log.Info("Successfully wrote genesis state", "database", "chaindata", "hash", hash)
+	return genesis.core, hash, nil
 }

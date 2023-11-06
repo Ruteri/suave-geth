@@ -38,6 +38,7 @@ import (
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rpc"
+	suave "github.com/ethereum/go-ethereum/suave/core"
 )
 
 // TestSetFeeDefaults tests the logic for filling in default fee values works as expected.
@@ -308,6 +309,12 @@ func (b *backendMock) GetTd(ctx context.Context, hash common.Hash) *big.Int { re
 func (b *backendMock) GetEVM(ctx context.Context, msg *core.Message, state *state.StateDB, header *types.Header, vmConfig *vm.Config, blockCtx *vm.BlockContext) (*vm.EVM, func() error) {
 	return nil, nil
 }
+func (b *backendMock) SuaveContext(requestTx *types.Transaction, ccr *types.ConfidentialComputeRequest) vm.SuaveContext {
+	return vm.SuaveContext{}
+}
+func (b *backendMock) GetMEVM(ctx context.Context, msg *core.Message, state *state.StateDB, header *types.Header, vmConfig *vm.Config, blockCtx *vm.BlockContext, suaveCtx *vm.SuaveContext) (*vm.EVM, func() error, func() error) {
+	return nil, nil, nil
+}
 func (b *backendMock) SubscribeChainEvent(ch chan<- core.ChainEvent) event.Subscription { return nil }
 func (b *backendMock) SubscribeChainHeadEvent(ch chan<- core.ChainHeadEvent) event.Subscription {
 	return nil
@@ -343,3 +350,11 @@ func (b *backendMock) SubscribeRemovedLogsEvent(ch chan<- core.RemovedLogsEvent)
 }
 
 func (b *backendMock) Engine() consensus.Engine { return nil }
+
+func (b *backendMock) BuildBlockFromTxs(ctx context.Context, buildArgs *suave.BuildBlockArgs, txs types.Transactions) (*types.Block, *big.Int, error) {
+	return nil, nil, errors.New("not implemented")
+}
+
+func (b *backendMock) BuildBlockFromBundles(ctx context.Context, buildArgs *suave.BuildBlockArgs, bundles []types.SBundle) (*types.Block, *big.Int, error) {
+	return nil, nil, errors.New("not implemented")
+}

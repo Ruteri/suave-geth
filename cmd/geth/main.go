@@ -20,6 +20,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -49,7 +50,7 @@ import (
 )
 
 const (
-	clientIdentifier = "geth" // Client identifier to advertise over the network
+	clientIdentifier = "suave-geth" // Client identifier to advertise over the network
 )
 
 var (
@@ -194,6 +195,16 @@ var (
 		utils.MetricsInfluxDBBucketFlag,
 		utils.MetricsInfluxDBOrganizationFlag,
 	}
+
+	suaveFlags = []cli.Flag{
+		utils.SuaveEthRemoteBackendEndpointFlag,
+		utils.SuaveConfidentialTransportRedisEndpointFlag,
+		utils.SuaveConfidentialStoreRedisEndpointFlag,
+		utils.SuaveConfidentialStorePebbleDbPathFlag,
+		utils.SuaveEthBundleSigningKeyFlag,
+		utils.SuaveEthBlockSigningKeyFlag,
+		utils.SuaveDevModeFlag,
+	}
 )
 
 var app = flags.NewApp("the go-ethereum command line interface")
@@ -233,6 +244,8 @@ func init() {
 		snapshotCommand,
 		// See verkle.go
 		verkleCommand,
+		// Suave commands
+		forgeCommand,
 	}
 	sort.Sort(cli.CommandsByName(app.Commands))
 
@@ -242,6 +255,7 @@ func init() {
 		consoleFlags,
 		debug.Flags,
 		metricsFlags,
+		suaveFlags,
 	)
 	flags.AutoEnvVars(app.Flags, "GETH")
 
@@ -276,6 +290,9 @@ func prepare(ctx *cli.Context) {
 	case ctx.IsSet(utils.GoerliFlag.Name):
 		log.Info("Starting Geth on Görli testnet...")
 
+	case ctx.IsSet(utils.SuaveFlag.Name):
+		log.Info("Starting Geth on Suave testnet...")
+
 	case ctx.IsSet(utils.SepoliaFlag.Name):
 		log.Info("Starting Geth on Sepolia testnet...")
 
@@ -309,6 +326,7 @@ func prepare(ctx *cli.Context) {
 		if !ctx.IsSet(utils.HoleskyFlag.Name) &&
 			!ctx.IsSet(utils.SepoliaFlag.Name) &&
 			!ctx.IsSet(utils.GoerliFlag.Name) &&
+			!ctx.IsSet(utils.SuaveFlag.Name) &&
 			!ctx.IsSet(utils.DeveloperFlag.Name) {
 			// Nope, we're really on mainnet. Bump that cache up!
 			log.Info("Bumping default cache on mainnet", "provided", ctx.Int(utils.CacheFlag.Name), "updated", 4096)
@@ -334,6 +352,10 @@ func prepare(ctx *cli.Context) {
 func geth(ctx *cli.Context) error {
 	if args := ctx.Args().Slice(); len(args) > 0 {
 		return fmt.Errorf("invalid command: %q", args[0])
+	}
+
+	if err := prepareSuaveDev(ctx); err != nil {
+		return fmt.Errorf("failed to setup suave development mode: %v", err)
 	}
 
 	prepare(ctx)
@@ -470,3 +492,61 @@ func unlockAccounts(ctx *cli.Context, stack *node.Node) {
 		unlockAccount(ks, account, i, passwords)
 	}
 }
+
+func prepareSuaveDev(ctx *cli.Context) error {
+	// if suave dev mode is enabled, we need to set some defaults
+	if !ctx.Bool(utils.SuaveDevModeFlag.Name) {
+		return nil
+	}
+
+	suaveDataTmpPath := "/tmp/suave-dev"
+	keystorePath := suaveDataTmpPath + "/keystore"
+	passwordPath := suaveDataTmpPath + "/password.txt"
+
+	// create a data directory under /tmp/suave-dev (if it does not exists) to store
+	// the keystore and the password (empty file) to unlock the execution node account.
+	if _, err := os.Stat(suaveDataTmpPath); err != nil {
+		if err := os.MkdirAll(suaveDataTmpPath, 0755); err != nil {
+			return err
+		}
+
+		// create the keystore
+		if err := os.MkdirAll(keystorePath, 0755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(keystorePath, "key.json"), []byte(suaveKeystore), 0755); err != nil {
+			return err
+		}
+
+		// create the password
+		if err := os.WriteFile(passwordPath, []byte(""), 0755); err != nil {
+			return err
+		}
+	}
+
+	// set the flags
+	flags := map[string]string{
+		utils.DeveloperFlag.Name:         "true",
+		utils.DeveloperGasLimitFlag.Name: "30000000",
+		utils.HTTPEnabledFlag.Name:       "true",
+		utils.HTTPPortFlag.Name:          "8545",
+		utils.HTTPVirtualHostsFlag.Name:  "*",
+		utils.HTTPCORSDomainFlag.Name:    "*",
+		utils.WSEnabledFlag.Name:         "true",
+		utils.WSAllowedOriginsFlag.Name:  "*",
+		utils.WSListenAddrFlag.Name:      "0.0.0.0",
+		utils.KeyStoreDirFlag.Name:       keystorePath,
+		utils.UnlockedAccountFlag.Name:   "0xB5fEAfbDD752ad52Afb7e1bD2E40432A485bBB7F",
+		utils.PasswordFileFlag.Name:      passwordPath,
+	}
+
+	for k, v := range flags {
+		if err := ctx.Set(k, v); err != nil {
+			panic(fmt.Sprintf("bad flag: %v", k))
+		}
+	}
+
+	return nil
+}
+
+var suaveKeystore = `{"address":"b5feafbdd752ad52afb7e1bd2e40432a485bbb7f","crypto":{"cipher":"aes-128-ctr","ciphertext":"8075ff2ed17c6cf6cd162b4bdd2926034e2067f03055990d57510e5d807ef06e","cipherparams":{"iv":"8c31b77d9518a68fda4aa6c90d62562d"},"kdf":"scrypt","kdfparams":{"dklen":32,"n":262144,"p":1,"r":8,"salt":"6e55b1eea32430c4dc0b87cfc31168d552249b8ba946314e3c41dbeaeed3d125"},"mac":"5e411244fd732deb4464d247cfeb9beadc8a37558f12720c4d2ee8691436c50c"},"id":"51d12702-2276-44a9-972e-2011c56edf4e","version":3}`

@@ -48,6 +48,7 @@ import (
 	"github.com/ethereum/go-ethereum/internal/blocktest"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rpc"
+	suave "github.com/ethereum/go-ethereum/suave/core"
 	"github.com/holiman/uint256"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/slices"
@@ -548,6 +549,12 @@ func (b testBackend) GetEVM(ctx context.Context, msg *core.Message, state *state
 	}
 	return vm.NewEVM(context, txContext, state, b.chain.Config(), *vmConfig), vmError
 }
+func (b testBackend) SuaveContext(requestTx *types.Transaction, ccr *types.ConfidentialComputeRequest) vm.SuaveContext {
+	return vm.SuaveContext{}
+}
+func (b testBackend) GetMEVM(ctx context.Context, msg *core.Message, state *state.StateDB, header *types.Header, vmConfig *vm.Config, blockCtx *vm.BlockContext, suaveCtx *vm.SuaveContext) (*vm.EVM, func() error, func() error) {
+	return nil, nil, nil
+}
 func (b testBackend) SubscribeChainEvent(ch chan<- core.ChainEvent) event.Subscription {
 	panic("implement me")
 }
@@ -595,6 +602,14 @@ func (b testBackend) SubscribePendingLogsEvent(ch chan<- []*types.Log) event.Sub
 }
 func (b testBackend) BloomStatus() (uint64, uint64) { panic("implement me") }
 func (b testBackend) ServiceFilter(ctx context.Context, session *bloombits.MatcherSession) {
+	panic("implement me")
+}
+
+func (b testBackend) BuildBlockFromTxs(ctx context.Context, buildArgs *suave.BuildBlockArgs, txs types.Transactions) (*types.Block, *big.Int, error) {
+	panic("implement me")
+}
+
+func (b testBackend) BuildBlockFromBundles(ctx context.Context, buildArgs *suave.BuildBlockArgs, bundles []types.SBundle) (*types.Block, *big.Int, error) {
 	panic("implement me")
 }
 

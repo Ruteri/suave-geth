@@ -42,6 +42,13 @@ type PrecompiledContract interface {
 	Run(input []byte) ([]byte, error) // Run runs the precompiled contract
 }
 
+// SuavePrecompiledContract is an optional interface for precompiled Suave contracts.
+// During confidential execution the contract will be called with their RunConfidential method.
+type SuavePrecompiledContract interface {
+	PrecompiledContract
+	RunConfidential(context *SuaveContext, input []byte) ([]byte, error)
+}
+
 // PrecompiledContractsHomestead contains the default set of pre-compiled Ethereum
 // contracts used in the Frontier and Homestead releases.
 var PrecompiledContractsHomestead = map[common.Address]PrecompiledContract{
@@ -76,6 +83,31 @@ var PrecompiledContractsIstanbul = map[common.Address]PrecompiledContract{
 	common.BytesToAddress([]byte{7}): &bn256ScalarMulIstanbul{},
 	common.BytesToAddress([]byte{8}): &bn256PairingIstanbul{},
 	common.BytesToAddress([]byte{9}): &blake2F{},
+}
+
+// PrecompiledContractsSuave contains the default set of pre-compiled SUAVE VM
+// contracts used in the suave testnet. It's a superset of Berlin precompiles.
+// Confidential contracts (implementing SuavePrecompiledContract)
+// are ran with their respective RunConfidential in confidential setting
+var PrecompiledContractsSuave = map[common.Address]SuavePrecompiledContract{
+	isConfidentialAddress:     &isConfidentialPrecompile{},
+	confidentialInputsAddress: &confidentialInputsPrecompile{},
+
+	confStoreAddress:    newconfStore(),
+	confRetrieveAddress: newconfRetrieve(),
+
+	newBidAddress:      newNewBid(),
+	fetchBidsAddress:   newFetchBids(),
+	extractHintAddress: &extractHint{},
+
+	signEthTransactionAddress:       &signEthTransaction{},
+	simulateBundleAddress:           &simulateBundle{},
+	buildEthBlockAddress:            &buildEthBlock{},
+	submitEthBlockBidToRelayAddress: &submitEthBlockBidToRelay{},
+	submitBundleJsonRPCAddress:      &submitBundleJsonRPC{},
+	fillMevShareBundleAddress:       &fillMevShareBundle{},
+
+	ethcallAddr: &ethCallPrecompile{},
 }
 
 // PrecompiledContractsBerlin contains the default set of pre-compiled Ethereum
@@ -123,6 +155,7 @@ var PrecompiledContractsBLS = map[common.Address]PrecompiledContract{
 
 var (
 	PrecompiledAddressesCancun    []common.Address
+	PrecompiledAddressesSuave     []common.Address
 	PrecompiledAddressesBerlin    []common.Address
 	PrecompiledAddressesIstanbul  []common.Address
 	PrecompiledAddressesByzantium []common.Address
@@ -145,22 +178,33 @@ func init() {
 	for k := range PrecompiledContractsCancun {
 		PrecompiledAddressesCancun = append(PrecompiledAddressesCancun, k)
 	}
+	for k := range PrecompiledContractsSuave {
+		PrecompiledAddressesSuave = append(PrecompiledAddressesSuave, k)
+	}
 }
 
 // ActivePrecompiles returns the precompiles enabled with the current configuration.
 func ActivePrecompiles(rules params.Rules) []common.Address {
+	var basePrecompiles []common.Address
+
 	switch {
 	case rules.IsCancun:
 		return PrecompiledAddressesCancun
 	case rules.IsBerlin:
-		return PrecompiledAddressesBerlin
+		basePrecompiles = PrecompiledAddressesBerlin
 	case rules.IsIstanbul:
-		return PrecompiledAddressesIstanbul
+		basePrecompiles = PrecompiledAddressesIstanbul
 	case rules.IsByzantium:
-		return PrecompiledAddressesByzantium
+		basePrecompiles = PrecompiledAddressesByzantium
 	default:
-		return PrecompiledAddressesHomestead
+		basePrecompiles = PrecompiledAddressesHomestead
 	}
+
+	if rules.IsSuave {
+		return append(basePrecompiles, PrecompiledAddressesSuave...)
+	}
+
+	return basePrecompiles
 }
 
 // RunPrecompiledContract runs and evaluates the output of a precompiled contract.
@@ -169,6 +213,7 @@ func ActivePrecompiles(rules params.Rules) []common.Address {
 // - the _remaining_ gas,
 // - any error that occurred
 func RunPrecompiledContract(p PrecompiledContract, input []byte, suppliedGas uint64) (ret []byte, remainingGas uint64, err error) {
+	// TODO: it'd be nice if the confidential contracts' exact gas usage was calculated with execution
 	gasCost := p.RequiredGas(input)
 	if suppliedGas < gasCost {
 		return nil, 0, ErrOutOfGas

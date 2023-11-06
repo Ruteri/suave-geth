@@ -41,10 +41,13 @@ var (
 
 // Transaction types.
 const (
-	LegacyTxType     = 0x00
-	AccessListTxType = 0x01
-	DynamicFeeTxType = 0x02
-	BlobTxType       = 0x03
+	LegacyTxType                     = 0x00
+	AccessListTxType                 = 0x01
+	DynamicFeeTxType                 = 0x02
+	BlobTxType                       = 0x03
+	ConfidentialComputeRecordTxType  = 0x42
+	ConfidentialComputeRequestTxType = 0x43
+	SuaveTxType                      = 0x50
 )
 
 // Transaction is an Ethereum transaction.
@@ -202,6 +205,10 @@ func (tx *Transaction) decodeTyped(b []byte) (TxData, error) {
 		inner = new(DynamicFeeTx)
 	case BlobTxType:
 		inner = new(BlobTx)
+	case ConfidentialComputeRequestTxType:
+		inner = new(ConfidentialComputeRequest)
+	case SuaveTxType:
+		inner = new(SuaveTransaction)
 	default:
 		return nil, ErrTxTypeNotSupported
 	}
@@ -266,6 +273,11 @@ func (tx *Transaction) Protected() bool {
 // Type returns the transaction type.
 func (tx *Transaction) Type() uint8 {
 	return tx.inner.txType()
+}
+
+func CastTxInner[T any](tx *Transaction) (T, bool) {
+	t, ok := tx.inner.(T)
+	return t, ok
 }
 
 // ChainId returns the EIP155 chain ID of the transaction. The return value will always be

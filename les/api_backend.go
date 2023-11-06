@@ -39,6 +39,7 @@ import (
 	"github.com/ethereum/go-ethereum/light"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rpc"
+	suave "github.com/ethereum/go-ethereum/suave/core"
 )
 
 type LesApiBackend struct {
@@ -195,6 +196,14 @@ func (b *LesApiBackend) GetEVM(ctx context.Context, msg *core.Message, state *st
 	return vm.NewEVM(context, txContext, state, b.eth.chainConfig, *vmConfig), state.Error
 }
 
+func (b *LesApiBackend) SuaveContext(requestTx *types.Transaction, ccr *types.ConfidentialComputeRequest) vm.SuaveContext {
+	return vm.SuaveContext{}
+}
+
+func (b *LesApiBackend) GetMEVM(ctx context.Context, msg *core.Message, state *state.StateDB, header *types.Header, vmConfig *vm.Config, blockCtx *vm.BlockContext, suaveCtx *vm.SuaveContext) (*vm.EVM, func() error, func() error) {
+	return nil, nil, nil
+}
+
 func (b *LesApiBackend) SendTx(ctx context.Context, signedTx *types.Transaction) error {
 	return b.eth.txPool.Add(ctx, signedTx)
 }
@@ -334,4 +343,12 @@ func (b *LesApiBackend) StateAtBlock(ctx context.Context, block *types.Block, re
 
 func (b *LesApiBackend) StateAtTransaction(ctx context.Context, block *types.Block, txIndex int, reexec uint64) (*core.Message, vm.BlockContext, *state.StateDB, tracers.StateReleaseFunc, error) {
 	return b.eth.stateAtTransaction(ctx, block, txIndex, reexec)
+}
+
+func (b *LesApiBackend) BuildBlockFromTxs(ctx context.Context, buildArgs *suave.BuildBlockArgs, txs types.Transactions) (*types.Block, *big.Int, error) {
+	return nil, nil, errors.New("not implemented")
+}
+
+func (b *LesApiBackend) BuildBlockFromBundles(context.Context, *types.BuildBlockArgs, []types.SBundle) (*types.Block, *big.Int, error) {
+	return nil, nil, errors.New("not implemented")
 }

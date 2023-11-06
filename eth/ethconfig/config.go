@@ -34,6 +34,7 @@ import (
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/miner"
 	"github.com/ethereum/go-ethereum/params"
+	suave "github.com/ethereum/go-ethereum/suave/core"
 )
 
 // FullNodeGPO contains default gasprice oracle settings for full node.
@@ -139,6 +140,9 @@ type Config struct {
 
 	// Mining options
 	Miner miner.Config
+
+	// Suave options
+	Suave suave.Config
 
 	// Transaction pool options
 	TxPool   legacypool.Config

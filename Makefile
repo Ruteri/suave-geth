@@ -2,7 +2,7 @@
 # with Go source code. If you know what GOPATH is then you probably
 # don't need to bother with make.
 
-.PHONY: geth android ios evm all test clean
+.PHONY: geth suave android ios evm all test clean
 
 GOBIN = ./build/bin
 GO ?= latest
@@ -12,6 +12,15 @@ geth:
 	$(GORUN) build/ci.go install ./cmd/geth
 	@echo "Done building."
 	@echo "Run \"$(GOBIN)/geth\" to launch geth."
+
+suave:
+	$(GORUN) build/ci.go install ./cmd/geth
+	cd $(GOBIN) && rm -f suave && ln -s geth suave
+	@echo "Done building."
+	@echo "Run \"$(GOBIN)/suave\" to launch SUAVE."
+
+	# Move a copy of the binary to GOPATH/bin
+	cp $(GOBIN)/suave $(GOPATH)/bin
 
 all:
 	$(GORUN) build/ci.go install
@@ -36,3 +45,13 @@ devtools:
 	env GOBIN= go install ./cmd/abigen
 	@type "solc" 2> /dev/null || echo 'Please install solc'
 	@type "protoc" 2> /dev/null || echo 'Please install protoc'
+
+suavedevtools:
+	./suave/scripts/contracts.sh build
+	go run ./suave/gen/main.go -write
+
+devnet-up:
+	docker-compose -f ./suave/devenv/docker-compose.yml up -d --build
+
+devnet-down:
+	docker-compose -f ./suave/devenv/docker-compose.yml down

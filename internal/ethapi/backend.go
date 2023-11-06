@@ -69,6 +69,7 @@ type Backend interface {
 	GetReceipts(ctx context.Context, hash common.Hash) (types.Receipts, error)
 	GetTd(ctx context.Context, hash common.Hash) *big.Int
 	GetEVM(ctx context.Context, msg *core.Message, state *state.StateDB, header *types.Header, vmConfig *vm.Config, blockCtx *vm.BlockContext) (*vm.EVM, func() error)
+	GetMEVM(ctx context.Context, msg *core.Message, state *state.StateDB, header *types.Header, vmConfig *vm.Config, blockCtx *vm.BlockContext, suaveCtx *vm.SuaveContext) (*vm.EVM, func() error, func() error)
 	SubscribeChainEvent(ch chan<- core.ChainEvent) event.Subscription
 	SubscribeChainHeadEvent(ch chan<- core.ChainHeadEvent) event.Subscription
 	SubscribeChainSideEvent(ch chan<- core.ChainSideEvent) event.Subscription
@@ -86,6 +87,7 @@ type Backend interface {
 
 	ChainConfig() *params.ChainConfig
 	Engine() consensus.Engine
+	SuaveContext(requestTx *types.Transaction, ccr *types.ConfidentialComputeRequest) vm.SuaveContext
 
 	// This is copied from filters.Backend
 	// eth/filters needs to be initialized from this backend type, so methods needed by
@@ -120,9 +122,6 @@ func GetAPIs(apiBackend Backend) []rpc.API {
 		}, {
 			Namespace: "eth",
 			Service:   NewEthereumAccountAPI(apiBackend.AccountManager()),
-		}, {
-			Namespace: "personal",
-			Service:   NewPersonalAccountAPI(apiBackend, nonceLock),
 		},
 	}
 }

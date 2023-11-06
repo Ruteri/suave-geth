@@ -18,6 +18,7 @@
 package eth
 
 import (
+	"crypto/ecdsa"
 	"errors"
 	"fmt"
 	"math/big"
@@ -39,6 +40,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/txpool/legacypool"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/eth/downloader"
 	"github.com/ethereum/go-ethereum/eth/ethconfig"
 	"github.com/ethereum/go-ethereum/eth/gasprice"
@@ -57,6 +59,11 @@ import (
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/rpc"
+	"github.com/ethereum/go-ethereum/suave/backends"
+	suave_backends "github.com/ethereum/go-ethereum/suave/backends"
+	suave "github.com/ethereum/go-ethereum/suave/core"
+	"github.com/ethereum/go-ethereum/suave/cstore"
+	"github.com/flashbots/go-boost-utils/bls"
 )
 
 // Config contains the configuration options of the ETH protocol.
@@ -248,7 +255,60 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	eth.miner = miner.New(eth, &config.Miner, eth.blockchain.Config(), eth.EventMux(), eth.engine, eth.isLocalBlock)
 	eth.miner.SetExtra(makeExtraData(config.Miner.ExtraData))
 
-	eth.APIBackend = &EthAPIBackend{stack.Config().ExtRPCEnabled(), stack.Config().AllowUnprotectedTxs, eth, nil}
+	var confidentialStoreBackend cstore.ConfidentialStorageBackend
+	if config.Suave.RedisStoreUri != "" {
+		confidentialStoreBackend, err = cstore.NewRedisStoreBackend(config.Suave.RedisStoreUri)
+		if err != nil {
+			return nil, err
+		}
+	} else if config.Suave.PebbleDbPath != "" {
+		confidentialStoreBackend, err = cstore.NewPebbleStoreBackend(config.Suave.PebbleDbPath)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		confidentialStoreBackend = cstore.NewLocalConfidentialStore()
+	}
+
+	var confidentialStoreTransport cstore.StoreTransportTopic
+	if config.Suave.RedisStorePubsubUri != "" {
+		confidentialStoreTransport = cstore.NewRedisPubSubTransport(config.Suave.RedisStorePubsubUri)
+	} else {
+		confidentialStoreTransport = cstore.MockTransport{}
+	}
+
+	var suaveEthBackend suave.ConfidentialEthBackend
+	if config.Suave.SuaveEthRemoteBackendEndpoint != "" {
+		suaveEthBackend = suave_backends.NewRemoteEthBackend(config.Suave.SuaveEthRemoteBackendEndpoint)
+	} else {
+		suaveEthBackend = &suave_backends.EthMock{}
+	}
+
+	var suaveEthBundleSigningKey *ecdsa.PrivateKey
+	if config.Suave.EthBundleSigningKeyHex != "" {
+		suaveEthBundleSigningKey, err = crypto.HexToECDSA(config.Suave.EthBundleSigningKeyHex)
+	} else {
+		suaveEthBundleSigningKey, err = crypto.GenerateKey()
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	var suaveEthBlockSigningKey *bls.SecretKey
+	if config.Suave.EthBlockSigningKeyHex != "" {
+		suaveEthBlockSigningKey, err = bls.SecretKeyFromBytes(hexutil.MustDecode(config.Suave.EthBlockSigningKeyHex))
+	} else {
+		suaveEthBlockSigningKey, err = bls.GenerateRandomSecretKey()
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	suaveDaSigner := &cstore.AccountManagerDASigner{Manager: eth.AccountManager()}
+
+	confidentialStoreEngine := cstore.NewConfidentialStoreEngine(confidentialStoreBackend, confidentialStoreTransport, suaveDaSigner, types.LatestSigner(chainConfig))
+
+	eth.APIBackend = &EthAPIBackend{stack.Config().ExtRPCEnabled(), stack.Config().AllowUnprotectedTxs, eth, nil, suaveEthBundleSigningKey, suaveEthBlockSigningKey, confidentialStoreEngine, suaveEthBackend}
 	if eth.APIBackend.allowUnprotectedTxs {
 		log.Info("Unprotected transactions allowed")
 	}
@@ -276,6 +336,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	stack.RegisterAPIs(eth.APIs())
 	stack.RegisterProtocols(eth.Protocols())
 	stack.RegisterLifecycle(eth)
+	stack.RegisterLifecycle(confidentialStoreEngine)
 
 	// Successful startup; push a marker and check previous unclean shutdowns.
 	eth.shutdownTracker.MarkStartup()
@@ -304,6 +365,12 @@ func makeExtraData(extra []byte) []byte {
 // NOTE, some of these services probably need to be moved to somewhere else.
 func (s *Ethereum) APIs() []rpc.API {
 	apis := ethapi.GetAPIs(s.APIBackend)
+
+	// Append SUAVE-enabled node backend
+	apis = append(apis, rpc.API{
+		Namespace: "suavex",
+		Service:   backends.NewEthBackendServer(s.APIBackend),
+	})
 
 	// Append any APIs exposed explicitly by the consensus engine
 	apis = append(apis, s.engine.APIs(s.BlockChain())...)
@@ -519,6 +586,7 @@ func (s *Ethereum) Start() error {
 	}
 	// Start the networking layer and the light server if requested
 	s.handler.Start(maxPeers)
+
 	return nil
 }
 

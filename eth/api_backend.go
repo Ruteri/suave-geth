@@ -18,6 +18,7 @@ package eth
 
 import (
 	"context"
+	"crypto/ecdsa"
 	"errors"
 	"math/big"
 	"time"
@@ -25,6 +26,7 @@ import (
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/bloombits"
@@ -37,17 +39,30 @@ import (
 	"github.com/ethereum/go-ethereum/eth/tracers"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/event"
+	"github.com/ethereum/go-ethereum/internal/ethapi"
 	"github.com/ethereum/go-ethereum/miner"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rpc"
+	suave "github.com/ethereum/go-ethereum/suave/core"
+	"github.com/ethereum/go-ethereum/suave/cstore"
+	"github.com/flashbots/go-boost-utils/bls"
 )
 
 // EthAPIBackend implements ethapi.Backend and tracers.Backend for full nodes
 type EthAPIBackend struct {
-	extRPCEnabled       bool
-	allowUnprotectedTxs bool
-	eth                 *Ethereum
-	gpo                 *gasprice.Oracle
+	extRPCEnabled            bool
+	allowUnprotectedTxs      bool
+	eth                      *Ethereum
+	gpo                      *gasprice.Oracle
+	suaveEthBundleSigningKey *ecdsa.PrivateKey
+	suaveEthBlockSigningKey  *bls.SecretKey
+	suaveEngine              *cstore.ConfidentialStoreEngine
+	suaveEthBackend          suave.ConfidentialEthBackend
+}
+
+// For testing purposes
+func (b *EthAPIBackend) SuaveEngine() *cstore.ConfidentialStoreEngine {
+	return b.suaveEngine
 }
 
 // ChainConfig returns the active chain configuration.
@@ -260,7 +275,31 @@ func (b *EthAPIBackend) GetEVM(ctx context.Context, msg *core.Message, state *st
 	} else {
 		context = core.NewEVMBlockContext(header, b.eth.BlockChain(), nil)
 	}
+
 	return vm.NewEVM(context, txContext, state, b.eth.blockchain.Config(), *vmConfig), state.Error
+}
+
+func (b *EthAPIBackend) GetMEVM(ctx context.Context, msg *core.Message, state *state.StateDB, header *types.Header, vmConfig *vm.Config, blockCtx *vm.BlockContext, suaveCtx *vm.SuaveContext) (*vm.EVM, func() error, func() error) {
+	if vmConfig == nil {
+		vmConfig = b.eth.blockchain.GetVMConfig()
+	}
+	txContext := core.NewEVMTxContext(msg)
+	var context vm.BlockContext
+	if blockCtx != nil {
+		context = *blockCtx
+	} else {
+		context = core.NewEVMBlockContext(header, b.eth.BlockChain(), nil)
+	}
+
+	suaveCtxCopy := *suaveCtx
+	storeTransaction := b.suaveEngine.NewTransactionalStore(suaveCtx.ConfidentialComputeRequestTx)
+	suaveCtxCopy.Backend = &vm.SuaveExecutionBackend{
+		EthBundleSigningKey:    suaveCtx.Backend.EthBundleSigningKey,
+		EthBlockSigningKey:     suaveCtx.Backend.EthBlockSigningKey,
+		ConfidentialStore:      storeTransaction,
+		ConfidentialEthBackend: b.suaveEthBackend,
+	}
+	return vm.NewConfidentialEVM(suaveCtxCopy, context, txContext, state, b.eth.blockchain.Config(), *vmConfig), storeTransaction.Finalize, state.Error
 }
 
 func (b *EthAPIBackend) SubscribeRemovedLogsEvent(ch chan<- core.RemovedLogsEvent) event.Subscription {
@@ -408,10 +447,50 @@ func (b *EthAPIBackend) StartMining() error {
 	return b.eth.StartMining()
 }
 
+func (b *EthAPIBackend) SuaveContext(requestTx *types.Transaction, ccr *types.ConfidentialComputeRequest) vm.SuaveContext {
+	storeTransaction := b.suaveEngine.NewTransactionalStore(requestTx)
+	return vm.SuaveContext{
+		ConfidentialComputeRequestTx: requestTx,
+		ConfidentialInputs:           ccr.ConfidentialInputs,
+		CallerStack:                  []*common.Address{},
+		Backend: &vm.SuaveExecutionBackend{
+			EthBundleSigningKey:    b.suaveEthBundleSigningKey,
+			EthBlockSigningKey:     b.suaveEthBlockSigningKey,
+			ConfidentialStore:      storeTransaction,
+			ConfidentialEthBackend: b.suaveEthBackend,
+		},
+	}
+}
+
+func (b *EthAPIBackend) BuildBlockFromTxs(ctx context.Context, buildArgs *suave.BuildBlockArgs, txs types.Transactions) (*types.Block, *big.Int, error) {
+	return b.eth.Miner().BuildBlockFromTxs(ctx, buildArgs, txs)
+}
+
+func (b *EthAPIBackend) BuildBlockFromBundles(ctx context.Context, buildArgs *suave.BuildBlockArgs, bundles []types.SBundle) (*types.Block, *big.Int, error) {
+	return b.eth.Miner().BuildBlockFromBundles(ctx, buildArgs, bundles)
+}
+
 func (b *EthAPIBackend) StateAtBlock(ctx context.Context, block *types.Block, reexec uint64, base *state.StateDB, readOnly bool, preferDisk bool) (*state.StateDB, tracers.StateReleaseFunc, error) {
 	return b.eth.stateAtBlock(ctx, block, reexec, base, readOnly, preferDisk)
 }
 
 func (b *EthAPIBackend) StateAtTransaction(ctx context.Context, block *types.Block, txIndex int, reexec uint64) (*core.Message, vm.BlockContext, *state.StateDB, tracers.StateReleaseFunc, error) {
 	return b.eth.stateAtTransaction(ctx, block, txIndex, reexec)
+}
+
+func (b *EthAPIBackend) Call(ctx context.Context, contractAddr common.Address, input []byte) ([]byte, error) {
+	// Note: this is pretty close to be a circle dependency.
+	data := hexutil.Bytes(input)
+	txnArgs := ethapi.TransactionArgs{
+		To:   &contractAddr,
+		Data: &data,
+	}
+
+	blockNum := rpc.LatestBlockNumber
+	res, err := ethapi.DoCall(ctx, b, txnArgs, rpc.BlockNumberOrHash{BlockNumber: &blockNum}, nil, nil, 5*time.Second, 100000)
+	if err != nil {
+		return nil, err
+	}
+
+	return res.ReturnData, nil
 }
